@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Option Greeks & P&L Explain — Market Risk</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" />
+    <style>
+      html, body { margin: 0; padding: 0; background: #0a0c10; }
+      body { font-family: 'DM Sans', system-ui, sans-serif; }
+      #root { min-height: 100vh; }
+      .loader {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        color: #c8a96e; font-family: 'Space Mono', monospace; font-size: 12px; letter-spacing: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div class="loader">LOADING DASHBOARD…</div></div>
+
+    <!-- React 18 UMD -->
+    <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+    <!-- Recharts dependencies -->
+    <script crossorigin src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <!-- Recharts UMD -->
+    <script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <!-- Babel standalone for in-browser JSX transform -->
+    <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+    <script type="text/babel" data-presets="react">
+      const { useState, useEffect, useRef } = React;
+      const {
+        LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+        ResponsiveContainer, ReferenceLine, Area, AreaChart, Legend
+      } = Recharts;
+
+      const COLORS = {
+        bg: "#0a0c10",
+        surface: "#111318",
+        border: "#1e2330",
+        accent: "#c8a96e",
+        accentDim: "#8a7048",
+        blue: "#4a9eff",
+        green: "#3ecf8e",
+        red: "#ff5a5a",
+        purple: "#b48eff",
+        muted: "#4a5568",
+        text: "#e2e8f0",
+        textDim: "#718096",
+      };
+
+      const greeks = [
+        {
+          id: "delta",
+          symbol: "Δ",
+          name: "Delta",
+          tagline: "How much does position value move with the stock?",
+          color: COLORS.blue,
+          description: [
+            "Delta measures how much an option's price changes for a $1 move in the underlying stock.",
+            "A delta of 0.6 means: if the stock rises $1, your option gains ~$0.60.",
+            "For the risk analyst, delta is directional exposure — the portfolio's aggregate delta tells you how 'long' or 'short' the market you effectively are.",
+            "Dollar Delta = Delta × 100 × Stock Price. This is the primary sensitivity tracked per desk.",
+          ],
+          riskNote: "A large positive aggregate delta = directional bet on the market. If it's unintended, it needs hedging.",
+          chartType: "delta",
+        },
+        {
+          id: "gamma",
+          symbol: "Γ",
+          name: "Gamma",
+          tagline: "How fast does delta change as the stock moves?",
+          color: COLORS.green,
+          description: [
+            "Gamma is the rate of change of delta. It measures the curvature of the option's P&L profile.",
+            "High gamma means delta shifts rapidly with the stock — the position becomes non-linear.",
+            "Long options = positive gamma (you benefit from large moves in either direction).",
+            "Short options = negative gamma (large moves hurt you — losses accelerate).",
+          ],
+          riskNote: "Gamma risk is highest near expiry and at-the-money. A desk with large short gamma is exposed in a volatile market.",
+          chartType: "gamma",
+        },
+        {
+          id: "vega",
+          symbol: "ν",
+          name: "Vega",
+          tagline: "How does implied volatility affect the position?",
+          color: COLORS.purple,
+          description: [
+            "Vega measures sensitivity to implied volatility (IV). A vega of 200 means a 1% rise in IV gains $200.",
+            "It's often the dominant risk in options books — more than delta.",
+            "Risk analysts monitor vega not just in aggregate but across the vol surface: by strike (skew exposure) and by maturity (term structure exposure).",
+            "A vol spike like March 2020 or August 2024 can produce massive P&L swings driven purely by vega, even if the stock doesn't move.",
+          ],
+          riskNote: "Vega is invisible until it isn't. Market dislocations are when it dominates the P&L explain.",
+          chartType: "vega",
+        },
+        {
+          id: "theta",
+          symbol: "Θ",
+          name: "Theta",
+          tagline: "Time decay — the clock working against option holders.",
+          color: COLORS.accent,
+          description: [
+            "Theta is the daily erosion of an option's time value, all else equal.",
+            "Long options lose theta every day — you're paying for the right to the move.",
+            "Short options gain theta — you collect premium as time passes.",
+            "In P&L explain, theta is the 'base case' daily P&L component. If nothing moves, theta explains the daily P&L drift.",
+          ],
+          riskNote: "Theta and gamma are two sides of the same coin: long gamma costs theta daily. Short gamma earns theta — until a large move wipes it out.",
+          chartType: "theta",
+        },
+      ];
+
+      function generateDeltaData(S0 = 100, K = 100, r = 0.02, T = 0.25, sigma = 0.2) {
+        const prices = [];
+        for (let S = 60; S <= 140; S += 2) {
+          const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+          const delta = normalCDF(d1);
+          const optionValue = S * delta - K * Math.exp(-r * T) * normalCDF(d1 - sigma * Math.sqrt(T));
+          prices.push({ S: S.toFixed(0), delta: +delta.toFixed(3), optionValue: +Math.max(optionValue, 0).toFixed(2) });
+        }
+        return prices;
+      }
+
+      function generateGammaData(S0 = 100, K = 100, r = 0.02, T = 0.25, sigma = 0.2) {
+        const data = [];
+        for (let S = 70; S <= 130; S += 1) {
+          const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+          const gamma = normalPDF(d1) / (S * sigma * Math.sqrt(T));
+          const delta = normalCDF(d1);
+          data.push({ S: S.toFixed(0), gamma: +(gamma * 100).toFixed(4), delta: +delta.toFixed(3) });
+        }
+        return data;
+      }
+
+      function generateVegaData() {
+        const data = [];
+        for (let iv = 0.05; iv <= 0.80; iv += 0.025) {
+          const S = 100, K = 100, r = 0.02, T = 0.25;
+          const d1 = (Math.log(S / K) + (r + 0.5 * iv * iv) * T) / (iv * Math.sqrt(T));
+          const vega = S * normalPDF(d1) * Math.sqrt(T);
+          const optionValue = S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d1 - iv * Math.sqrt(T));
+          data.push({ iv: (iv * 100).toFixed(0), vega: +vega.toFixed(2), optionValue: +optionValue.toFixed(2) });
+        }
+        return data;
+      }
+
+      function generateThetaData() {
+        const data = [];
+        for (let daysLeft = 90; daysLeft >= 1; daysLeft -= 2) {
+          const T = daysLeft / 365;
+          const S = 100, K = 100, r = 0.02, sigma = 0.2;
+          const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+          const d2 = d1 - sigma * Math.sqrt(T);
+          const theta = (-S * normalPDF(d1) * sigma / (2 * Math.sqrt(T)) - r * K * Math.exp(-r * T) * normalCDF(d2)) / 365;
+          const optionValue = S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2);
+          data.push({ days: daysLeft, theta: +(theta).toFixed(4), optionValue: +optionValue.toFixed(2) });
+        }
+        return data.reverse();
+      }
+
+      function generateVolSmileData(skewMode = "normal") {
+        const data = [];
+        const strikes = [80, 85, 90, 95, 100, 105, 110, 115, 120];
+        strikes.forEach(K => {
+          const moneyness = K / 100;
+          let iv;
+          if (skewMode === "normal") {
+            iv = 0.20 + 0.08 * Math.pow(moneyness - 1, 2);
+          } else if (skewMode === "equity") {
+            iv = 0.20 + 0.10 * Math.pow(moneyness - 1, 2) - 0.04 * (moneyness - 1);
+          } else {
+            iv = 0.20 + 0.12 * Math.pow(moneyness - 1, 2) - 0.08 * (moneyness - 1);
+          }
+          data.push({ K, iv: +(iv * 100).toFixed(2) });
+        });
+        return data;
+      }
+
+      function generateTermStructureData() {
+        const maturities = [1, 2, 3, 6, 9, 12, 18, 24];
+        return {
+          normal: maturities.map(m => ({ m, iv: +(18 + 3 * Math.log(m + 1)).toFixed(1) })),
+          stressed: maturities.map(m => ({ m, iv: +(35 - 8 * Math.log(m + 1)).toFixed(1) })),
+        };
+      }
+
+      function generateConvexityData() {
+        const data = [];
+        const S0 = 100, K = 100, r = 0.02, T = 0.25, sigma = 0.2;
+        const d1_0 = (Math.log(S0 / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+        const delta0 = normalCDF(d1_0);
+        for (let S = 75; S <= 125; S += 1) {
+          const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+          const d2 = d1 - sigma * Math.sqrt(T);
+          const trueValue = S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2);
+          const baseValue = S0 * normalCDF(d1_0) - K * Math.exp(-r * T) * normalCDF(d1_0 - sigma * Math.sqrt(T));
+          const linearApprox = baseValue + delta0 * (S - S0);
+          const gammaGain = trueValue - linearApprox;
+          data.push({
+            S,
+            trueValue: +trueValue.toFixed(3),
+            linearApprox: +Math.max(linearApprox, 0).toFixed(3),
+            gammaGain: +gammaGain.toFixed(3),
+          });
+        }
+        return data;
+      }
+
+      function normalCDF(x) {
+        const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
+        const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+        const sign = x < 0 ? -1 : 1;
+        x = Math.abs(x) / Math.sqrt(2);
+        const t = 1 / (1 + p * x);
+        const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+        return 0.5 * (1 + sign * y);
+      }
+      function normalPDF(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
+
+      function ImpliedVolSection() {
+        const [skew, setSkew] = useState("equity");
+        const [termView, setTermView] = useState("normal");
+        const smileData = generateVolSmileData(skew);
+        const termData = generateTermStructureData();
+
+        const skewLabels = { normal: "Symmetric Smile", equity: "Equity Skew", smirk: "Crash Smirk" };
+        const skewColors = { normal: COLORS.blue, equity: COLORS.purple, smirk: COLORS.red };
+
+        return (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 28, marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+              <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 36, color: COLORS.red }}>σ</span>
+              <div>
+                <div style={{ color: COLORS.text, fontFamily: "'DM Serif Display', serif", fontSize: 22 }}>Implied Volatility</div>
+                <div style={{ color: COLORS.red, fontSize: 12 }}>The market's forward-looking fear gauge — and the surface behind it.</div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 20 }}>
+              {[
+                "Implied volatility (IV) is the volatility value you back out from a market option price using Black-Scholes. It's what the market implies about future moves.",
+                "Unlike historical (realized) vol — which is backward-looking — IV is forward-looking: it reflects supply/demand for options and market fear.",
+                "IV is not constant across strikes or maturities. Plotting it creates the volatility surface — the single most important object in equity derivatives risk management.",
+                "A risk analyst must understand not just the level of IV, but the shape: the smile (curvature across strikes) and the term structure (how vol changes with maturity).",
+              ].map((txt, i) => (
+                <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <span style={{ color: COLORS.red, fontSize: 14, marginTop: 2, flexShrink: 0 }}>›</span>
+                  <span style={{ color: COLORS.textDim, fontSize: 13, lineHeight: 1.6 }}>{txt}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div>
+                  <div style={{ color: COLORS.text, fontSize: 15, fontWeight: 500 }}>Volatility Smile / Skew</div>
+                  <div style={{ color: COLORS.textDim, fontSize: 12 }}>IV plotted across strikes. Shape reveals market sentiment.</div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["normal", "equity", "smirk"].map(s => (
+                    <button key={s} onClick={() => setSkew(s)} style={{
+                      background: skew === s ? skewColors[s] + "22" : "transparent",
+                      border: `1px solid ${skew === s ? skewColors[s] : COLORS.border}`,
+                      color: skew === s ? skewColors[s] : COLORS.textDim,
+                      borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 11,
+                      fontFamily: "'Space Mono', monospace",
+                    }}>{skewLabels[s]}</button>
+                  ))}
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={smileData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
+                  <XAxis dataKey="K" stroke={COLORS.muted} tick={{ fill: COLORS.textDim, fontSize: 11 }}
+                    label={{ value: "Strike", position: "insideBottom", offset: -2, fill: COLORS.muted, fontSize: 11 }} />
+                  <YAxis stroke={COLORS.muted} tick={{ fill: COLORS.textDim, fontSize: 11 }}
+                    label={{ value: "IV (%)", angle: -90, position: "insideLeft", fill: COLORS.muted, fontSize: 11 }} />
+                  <ReferenceLine x={100} stroke={COLORS.muted} strokeDasharray="4 2" label={{ value: "ATM", fill: COLORS.muted, fontSize: 10 }} />
+                  <Tooltip contentStyle={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6 }}
+                    labelStyle={{ color: COLORS.textDim }} itemStyle={{ color: COLORS.text }}
+                    formatter={(v) => [`${v}%`, "IV"]} labelFormatter={(l) => `Strike: ${l}`} />
+                  <Line type="monotone" dataKey="iv" stroke={skewColors[skew]} strokeWidth={2.5} dot={{ fill: skewColors[skew], r: 3 }} name="IV (%)" />
+                </LineChart>
+              </ResponsiveContainer>
+
+              <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                {[
+                  { label: "Symmetric Smile", color: COLORS.blue, desc: "Both OTM puts and calls are expensive. Common in FX." },
+                  { label: "Equity Skew", color: COLORS.purple, desc: "OTM puts command a premium — market fears sharp drops more than rallies. Standard in equity markets." },
+                  { label: "Crash Smirk", color: COLORS.red, desc: "Extreme left skew. Deep OTM puts are very expensive. Seen during stress — August 2015, COVID, etc." },
+                ].map(({ label, color, desc }) => (
+                  <div key={label} style={{ background: COLORS.bg, borderRadius: 6, padding: "10px 12px", borderLeft: `3px solid ${color}` }}>
+                    <div style={{ color, fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                    <div style={{ color: COLORS.textDim, fontSize: 11, lineHeight: 1.5 }}>{desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div>
+                  <div style={{ color: COLORS.text, fontSize: 15, fontWeight: 500 }}>Vol Term Structure</div>
+                  <div style={{ color: COLORS.textDim, fontSize: 12 }}>ATM IV plotted across maturities (months).</div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["normal", "stressed"].map(t => (
+                    <button key={t} onClick={() => setTermView(t)} style={{
+                      background: termView === t ? (t === "stressed" ? COLORS.red : COLORS.green) + "22" : "transparent",
+                      border: `1px solid ${termView === t ? (t === "stressed" ? COLORS.red : COLORS.green) : COLORS.border}`,
+                      color: termView === t ? (t === "stressed" ? COLORS.red : COLORS.green) : COLORS.textDim,
+                      borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 11,
+                      fontFamily: "'Space Mono', monospace",
+                    }}>{t === "normal" ? "Normal market" : "Stress / Inversion"}</button>
+                  ))}
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={termData[termView]} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
+                  <XAxis dataKey="m" stroke={COLORS.muted} tick={{ fill: COLORS.textDim, fontSize: 11 }}
+                    label={{ value: "Maturity (months)", position: "insideBottom", offset: -2, fill: COLORS.muted, fontSize: 11 }} />
+                  <YAxis stroke={COLORS.muted} tick={{ fill: COLORS.textDim, fontSize: 11 }}
+                    label={{ value: "ATM IV (%)", angle: -90, position: "insideLeft", fill: COLORS.muted, fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6 }}
+                    labelStyle={{ color: COLORS.textDim }} itemStyle={{ color: COLORS.text }}
+                    formatter={(v) => [`${v}%`, "ATM IV"]} labelFormatter={(l) => `${l}m`} />
+                  <Line type="monotone" dataKey="iv" stroke={termView === "stressed" ? COLORS.red : COLORS.green}
+                    strokeWidth={2.5} dot={{ fill: termView === "stressed" ? COLORS.red : COLORS.green, r: 3 }} name="ATM IV (%)" />
+                </LineChart>
+              </ResponsiveContainer>
+              <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                {[
+                  { color: COLORS.green, label: "Normal: contango", desc: "Short-dated vol is lower. Market expects near-term stability but more uncertainty long-term. Vol traders call this 'upward sloping'." },
+                  { color: COLORS.red, label: "Inverted: backwardation", desc: "Near-term vol spikes above long-term. Classic crisis signal — VIX spike, rate shock, geo risk. The surface inverts because fear is immediate." },
+                ].map(({ color, label, desc }) => (
+                  <div key={label} style={{ background: COLORS.bg, borderRadius: 6, padding: "10px 12px", borderLeft: `3px solid ${color}` }}>
+                    <div style={{ color, fontSize: 11, fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                    <div style={{ color: COLORS.textDim, fontSize: 11, lineHeight: 1.5 }}>{desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 16, padding: "10px 14px", background: COLORS.bg, borderRadius: 6, borderLeft: `3px solid ${COLORS.red}` }}>
+              <span style={{ color: COLORS.red, fontSize: 12, fontWeight: 600 }}>Risk Analyst Note — </span>
+              <span style={{ color: COLORS.textDim, fontSize: 12 }}>
+                The vega from your Greeks tells you the $ sensitivity to a 1% vol move. But which vol?
+                A book with vega concentrated in short-dated OTM puts faces a very different risk than one spread across the surface.
+                The vol surface shape — skew and term structure — is what makes vega monitoring non-trivial.
+              </span>
+            </div>
+          </div>
+        );
+      }
+
+      function ConvexitySection() {
+        const [showGammaGain, setShowGammaGain] = useState(true);
+        const data = generateConvexityData();
+
+        return (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 28, marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+              <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 36, color: COLORS.green }}>Γ</span>
+              <div>
+                <div style={{ color: COLORS.text, fontFamily: "'DM Serif Display', serif", fontSize: 22 }}>Gamma = Convexity</div>
+                <div style={{ color: COLORS.green, fontSize: 12 }}>Options are non-linear. Gamma is the curvature — and curvature is always worth something.</div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 20 }}>
+              {[
+                "Convexity in bonds means the price-yield relationship is curved, not linear — a bond with more convexity gains more when yields fall than it loses when yields rise. Gamma is the exact same concept for options.",
+                "A long option position has positive convexity (positive gamma): you gain more from large moves than you lose from delta mis-hedging. The P&L profile curves upward.",
+                "Delta is the tangent line at current price. Gamma is the curvature away from that line. The 'gamma gain' is the extra P&L that delta alone cannot explain — the ½Γ·ΔS² term.",
+                "This is why long options always have positive value even when ATM: you are long convexity, and convexity is always worth paying for.",
+              ].map((txt, i) => (
+                <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <span style={{ color: COLORS.green, fontSize: 14, marginTop: 2, flexShrink: 0 }}>›</span>
+                  <span style={{ color: COLORS.textDim, fontSize: 13, lineHeight: 1.6 }}>{txt}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <button onClick={() => setShowGammaGain(false)} style={{
+                background: !showGammaGain ? COLORS.blue + "22" : "transparent",
+                border: `1px solid ${!showGammaGain ? COLORS.blue : COLORS.border}`,
+                color: !showGammaGain ? COLORS.blue : COLORS.textDim,
+                borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 11,
+                fontFamily: "'Space Mono', monospace",
+              }}>Option vs Linear (Delta)</button>
+              <button onClick={() => setShowGammaGain(true)} style={{
+                background: showGammaGain ? COLORS.green + "22" : "transparent",
+                border: `1px solid ${showGammaGain ? COLORS.green : COLORS.border}`,
+                color: showGammaGain ? COLORS.green : COLORS.textDim,
+                borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 11,
+                fontFamily: "'Space Mono', monospace",
+              }}>Gamma Gain (Convexity)</button>
+            </div>
+
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
+                <XAxis dataKey="S" stroke={COLORS.muted} tick={{ fill: COLORS.textDim, fontSize: 11 }}
+                  label={{ value: "Stock Price ($)", position: "insideBottom", offset: -2, fill: COLORS.muted, fontSize: 11 }} />
+                <YAxis stroke={COLORS.muted} tick={{ fill: COLORS.textDim, fontSize: 11 }} />
+                <ReferenceLine x={100} stroke={COLORS.muted} strokeDasharray="4 2" label={{ value: "Current price", fill: COLORS.muted, fontSize: 10 }} />
+                <ReferenceLine y={0} stroke={COLORS.muted} strokeDasharray="2 2" />
+                <Tooltip contentStyle={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6 }}
+                  labelStyle={{ color: COLORS.textDim }} itemStyle={{ color: COLORS.text }}
+                  formatter={(v, n) => [v.toFixed(3), n]} labelFormatter={(l) => `S = $${l}`} />
+                <Legend wrapperStyle={{ color: COLORS.textDim, fontSize: 11 }} />
+                {!showGammaGain ? (
+                  <>
+                    <Line type="monotone" dataKey="trueValue" stroke={COLORS.green} strokeWidth={2.5} dot={false} name="True option value (curved)" />
+                    <Line type="monotone" dataKey="linearApprox" stroke={COLORS.blue} strokeWidth={1.5} strokeDasharray="5 3" dot={false} name="Delta approx (linear)" />
+                  </>
+                ) : (
+                  <Line type="monotone" dataKey="gammaGain" stroke={COLORS.green} strokeWidth={2.5} dot={false} name="Gamma gain = ½Γ·ΔS²" />
+                )}
+              </LineChart>
+            </ResponsiveContainer>
+
+            <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ background: COLORS.bg, borderRadius: 8, padding: "14px 16px", borderTop: `2px solid ${COLORS.green}` }}>
+                <div style={{ color: COLORS.green, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Long Gamma (Long Options)</div>
+                <div style={{ color: COLORS.textDim, fontSize: 12, lineHeight: 1.6 }}>
+                  Positive convexity. You gain from large moves in either direction — your delta automatically adjusts favorably.
+                  Cost: you pay theta every day. You need realized vol to exceed the implied vol you paid for.
+                </div>
+              </div>
+              <div style={{ background: COLORS.bg, borderRadius: 8, padding: "14px 16px", borderTop: `2px solid ${COLORS.red}` }}>
+                <div style={{ color: COLORS.red, fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Short Gamma (Short Options)</div>
+                <div style={{ color: COLORS.textDim, fontSize: 12, lineHeight: 1.6 }}>
+                  Negative convexity. You collect theta, but large moves hurt you — delta mis-hedging accelerates losses.
+                  You need realized vol to stay below the IV at which you sold.
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14, padding: "10px 14px", background: COLORS.bg, borderRadius: 6, borderLeft: `3px solid ${COLORS.green}` }}>
+              <span style={{ color: COLORS.green, fontSize: 12, fontWeight: 600 }}>Bond analogy — </span>
+              <span style={{ color: COLORS.textDim, fontSize: 12 }}>
+                Duration = Delta (first-order sensitivity). Convexity = Gamma (second-order, the curvature).
+                A bond with more convexity outperforms in large rate moves — just as long gamma outperforms in large stock moves.
+                Both are non-linear benefits that cost something: bond convexity costs yield; option gamma costs theta.
+              </span>
+            </div>
+          </div>
+        );
+      }
+
+      function PnLExplainSection() {
+        const [stock, setStock] = useState(100);
+        const [vol, setVol] = useState(20);
+        const [days, setDays] = useState(0);
+
+        const S0 = 100, K = 100, r = 0.02, T0 = 0.25, sigma0 = 0.20;
+
+        function bsPrice(S, sigma, T) {
+          if (T <= 0) return Math.max(S - K, 0);
+          const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+          const d2 = d1 - sigma * Math.sqrt(T);
+          return S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2);
+        }
+
+        const sigmaNew = vol / 100;
+        const TNew = Math.max(T0 - days / 365, 0.001);
+
+        const originalPrice = bsPrice(S0, sigma0, T0);
+        const newPrice = bsPrice(stock, sigmaNew, TNew);
+        const totalPnL = newPrice - originalPrice;
+
+        const d1 = (Math.log(S0 / K) + (r + 0.5 * sigma0 * sigma0) * T0) / (sigma0 * Math.sqrt(T0));
+        const delta0 = normalCDF(d1);
+        const gamma0 = normalPDF(d1) / (S0 * sigma0 * Math.sqrt(T0));
+        const vega0 = S0 * normalPDF(d1) * Math.sqrt(T0);
+        const theta0 = (-S0 * normalPDF(d1) * sigma0 / (2 * Math.sqrt(T0)) - r * K * Math.exp(-r * T0) * normalCDF(d1 - sigma0 * Math.sqrt(T0))) / 365;
+
+        const dS = stock - S0;
+        const dSigma = sigmaNew - sigma0;
+
+        const deltaPnL = delta0 * dS;
+        const gammaPnL = 0.5 * gamma0 * dS * dS;
+        const vegaPnL = vega0 * dSigma;
+        const thetaPnL = theta0 * days;
+        const unexplained = totalPnL - deltaPnL - gammaPnL - vegaPnL - thetaPnL;
+
+        const components = [
+          { name: "Delta", value: deltaPnL, color: COLORS.blue },
+          { name: "Gamma", value: gammaPnL, color: COLORS.green },
+          { name: "Vega", value: vegaPnL, color: COLORS.purple },
+          { name: "Theta", value: thetaPnL, color: COLORS.accent },
+          { name: "Unexplained", value: unexplained, color: COLORS.muted },
+        ];
+
+        const maxAbs = Math.max(...components.map(c => Math.abs(c.value)), 0.01);
+
+        return (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 28 }}>
+            <div style={{ marginBottom: 20 }}>
+              <h3 style={{ color: COLORS.accent, fontFamily: "'DM Serif Display', serif", fontSize: 22, margin: "0 0 6px" }}>
+                P&L Explain — Live Simulator
+              </h3>
+              <p style={{ color: COLORS.textDim, fontSize: 13, margin: 0 }}>
+                ATM call option: S=100, K=100, T=3m, σ=20%. Adjust market conditions and watch the P&L decompose.
+              </p>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 24 }}>
+              {[
+                { label: "Stock Price ($)", min: 80, max: 120, step: 1, val: stock, set: setStock, unit: "$" },
+                { label: "Implied Vol (%)", min: 10, max: 50, step: 1, val: vol, set: setVol, unit: "%" },
+                { label: "Days Passed", min: 0, max: 60, step: 1, val: days, set: setDays, unit: "d" },
+              ].map(({ label, min, max, step, val, set, unit }) => (
+                <div key={label}>
+                  <label style={{ color: COLORS.textDim, fontSize: 11, fontFamily: "'Space Mono', monospace", letterSpacing: 1, display: "block", marginBottom: 6 }}>
+                    {label}
+                  </label>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <input type="range" min={min} max={max} step={step} value={val}
+                      onChange={e => set(+e.target.value)}
+                      style={{ flex: 1, accentColor: COLORS.accent, cursor: "pointer" }} />
+                    <span style={{ color: COLORS.text, fontFamily: "'Space Mono', monospace", fontSize: 14, minWidth: 44, textAlign: "right" }}>
+                      {val}{unit}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
+              <div style={{ background: COLORS.bg, borderRadius: 8, padding: 16 }}>
+                <div style={{ color: COLORS.textDim, fontSize: 11, fontFamily: "'Space Mono', monospace", letterSpacing: 1, marginBottom: 8 }}>
+                  TOTAL P&L
+                </div>
+                <div style={{ color: totalPnL >= 0 ? COLORS.green : COLORS.red, fontFamily: "'DM Serif Display', serif", fontSize: 32 }}>
+                  {totalPnL >= 0 ? "+" : ""}{totalPnL.toFixed(3)}
+                </div>
+                <div style={{ color: COLORS.textDim, fontSize: 12, marginTop: 4 }}>per option contract (×100 for lot)</div>
+              </div>
+              <div style={{ background: COLORS.bg, borderRadius: 8, padding: 16 }}>
+                <div style={{ color: COLORS.textDim, fontSize: 11, fontFamily: "'Space Mono', monospace", letterSpacing: 1, marginBottom: 8 }}>
+                  OPTION VALUE
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ color: COLORS.textDim, fontSize: 11 }}>Original</div>
+                    <div style={{ color: COLORS.text, fontFamily: "'Space Mono', monospace", fontSize: 18 }}>${originalPrice.toFixed(3)}</div>
+                  </div>
+                  <div style={{ color: COLORS.muted, fontSize: 20 }}>→</div>
+                  <div>
+                    <div style={{ color: COLORS.textDim, fontSize: 11 }}>New</div>
+                    <div style={{ color: COLORS.text, fontFamily: "'Space Mono', monospace", fontSize: 18 }}>${newPrice.toFixed(3)}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ color: COLORS.textDim, fontSize: 11, fontFamily: "'Space Mono', monospace", letterSpacing: 1, marginBottom: 12 }}>
+              P&L DECOMPOSITION
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {components.map(({ name, value, color }) => {
+                const pct = maxAbs > 0 ? (Math.abs(value) / maxAbs) * 100 : 0;
+                return (
+                  <div key={name} style={{ display: "grid", gridTemplateColumns: "80px 1fr 80px", gap: 10, alignItems: "center" }}>
+                    <span style={{ color: COLORS.textDim, fontSize: 12, fontFamily: "'Space Mono', monospace" }}>{name}</span>
+                    <div style={{ background: COLORS.bg, borderRadius: 4, height: 8, overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%", width: `${pct}%`,
+                        background: value === 0 ? COLORS.muted : (value > 0 ? color : color),
+                        opacity: value === 0 ? 0.3 : (value > 0 ? 0.9 : 0.5),
+                        transition: "width 0.3s ease",
+                        borderRadius: 4,
+                      }} />
+                    </div>
+                    <span style={{
+                      color: name === "Unexplained" ? COLORS.muted : (value >= 0 ? COLORS.green : COLORS.red),
+                      fontFamily: "'Space Mono', monospace", fontSize: 12, textAlign: "right",
+                    }}>
+                      {value >= 0 ? "+" : ""}{value.toFixed(3)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 16, padding: "10px 14px", background: COLORS.bg, borderRadius: 6, borderLeft: `3px solid ${COLORS.accent}` }}>
+              <span style={{ color: COLORS.textDim, fontSize: 12 }}>
+                <span style={{ color: COLORS.accent }}>Risk insight: </span>
+                Unexplained P&L = {unexplained.toFixed(3)}. {Math.abs(unexplained) > 0.05
+                  ? "⚠ Non-trivial unexplained component — in practice, this would trigger investigation (higher-order Greeks, model limitations, missing risk factors)."
+                  : "✓ Explanation is tight — higher-order effects are small in this scenario."}
+              </span>
+            </div>
+          </div>
+        );
+      }
+
+      function GreekCard({ greek, isActive, onClick }) {
+        return (
+          <button onClick={onClick} style={{
+            background: isActive ? greek.color + "18" : COLORS.surface,
+            border: `1px solid ${isActive ? greek.color : COLORS.border}`,
+            borderRadius: 10, padding: "14px 18px", cursor: "pointer", textAlign: "left",
+            transition: "all 0.2s", width: "100%",
+          }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+              <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: greek.color }}>{greek.symbol}</span>
+              <span style={{ color: COLORS.text, fontFamily: "'DM Serif Display', serif", fontSize: 16 }}>{greek.name}</span>
+            </div>
+            <div style={{ color: COLORS.textDim, fontSize: 11 }}>{greek.tagline}</div>
+          </button>
+        );
+      }
+
+      function GreekChart({ greek }) {
+        const data = greek.chartType === "delta" ? generateDeltaData()
+          : greek.chartType === "gamma" ? generateGammaData()
+          : greek.chartType === "vega" ? generateVegaData()
+          : generateThetaData();
+
+        const xKey = greek.chartType === "vega" ? "iv" : greek.chartType === "theta" ? "days" : "S";
+        const xLabel = greek.chartType === "vega" ? "Implied Vol (%)" : greek.chartType === "theta" ? "Days to Expiry" : "Stock Price ($)";
+
+        const configs = {
+          delta: [
+            { key: "optionValue", color: COLORS.blue, name: "Option Value ($)", strokeDash: "0" },
+            { key: "delta", color: COLORS.green, name: "Delta", strokeDash: "4 2" },
+          ],
+          gamma: [
+            { key: "gamma", color: COLORS.green, name: "Gamma (×100)", strokeDash: "0" },
+            { key: "delta", color: COLORS.blue, name: "Delta", strokeDash: "4 2" },
+          ],
+          vega: [
+            { key: "optionValue", color: COLORS.purple, name: "Option Value ($)", strokeDash: "0" },
+            { key: "vega", color: COLORS.accent, name: "Vega ($)", strokeDash: "4 2" },
+          ],
+          theta: [
+            { key: "optionValue", color: COLORS.accent, name: "Option Value ($)", strokeDash: "0" },
+          ],
+        };
+
+        return (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 24 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+              <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 36, color: greek.color }}>{greek.symbol}</span>
+              <div>
+                <div style={{ color: COLORS.text, fontFamily: "'DM Serif Display', serif", fontSize: 22 }}>{greek.name}</div>
+                <div style={{ color: greek.color, fontSize: 12 }}>{greek.tagline}</div>
+              </div>
+            </div>
+
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
+                <XAxis dataKey={xKey} stroke={COLORS.muted} tick={{ fill: COLORS.textDim, fontSize: 11 }}
+                  label={{ value: xLabel, position: "insideBottom", offset: -2, fill: COLORS.muted, fontSize: 11 }} />
+                <YAxis stroke={COLORS.muted} tick={{ fill: COLORS.textDim, fontSize: 11 }} />
+                <Tooltip contentStyle={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6 }}
+                  labelStyle={{ color: COLORS.textDim }} itemStyle={{ color: COLORS.text }} />
+                <Legend wrapperStyle={{ color: COLORS.textDim, fontSize: 11 }} />
+                {greek.chartType === "delta" && <ReferenceLine x="100" stroke={COLORS.muted} strokeDasharray="4 2" label={{ value: "ATM", fill: COLORS.muted, fontSize: 10 }} />}
+                {greek.chartType === "gamma" && <ReferenceLine x="100" stroke={COLORS.muted} strokeDasharray="4 2" label={{ value: "ATM", fill: COLORS.muted, fontSize: 10 }} />}
+                {configs[greek.chartType].map(cfg => (
+                  <Line key={cfg.key} type="monotone" dataKey={cfg.key} stroke={cfg.color}
+                    strokeWidth={2} strokeDasharray={cfg.strokeDash} dot={false} name={cfg.name} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+
+            <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 8 }}>
+              {greek.description.map((txt, i) => (
+                <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <span style={{ color: greek.color, fontSize: 14, marginTop: 2, flexShrink: 0 }}>›</span>
+                  <span style={{ color: COLORS.textDim, fontSize: 13, lineHeight: 1.6 }}>{txt}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 16, padding: "12px 14px", background: COLORS.bg, borderRadius: 6, borderLeft: `3px solid ${greek.color}` }}>
+              <span style={{ color: greek.color, fontSize: 12, fontWeight: 600 }}>Risk Analyst Note — </span>
+              <span style={{ color: COLORS.textDim, fontSize: 12 }}>{greek.riskNote}</span>
+            </div>
+          </div>
+        );
+      }
+
+      function GammaTheta() {
+        const data = [];
+        for (let daysLeft = 90; daysLeft >= 1; daysLeft -= 2) {
+          const T = daysLeft / 365;
+          const S = 100, K = 100, r = 0.02, sigma = 0.2;
+          const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+          const d2 = d1 - sigma * Math.sqrt(T);
+          const gamma = normalPDF(d1) / (S * sigma * Math.sqrt(T));
+          const theta = (-S * normalPDF(d1) * sigma / (2 * Math.sqrt(T)) - r * K * Math.exp(-r * T) * normalCDF(d2)) / 365;
+          data.push({ days: daysLeft, gamma: +(gamma * 1000).toFixed(4), thetaAbs: +(Math.abs(theta) * 100).toFixed(4) });
+        }
+        return (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 24 }}>
+            <h3 style={{ color: COLORS.text, fontFamily: "'DM Serif Display', serif", fontSize: 20, margin: "0 0 6px" }}>
+              Gamma / Theta Trade-off
+            </h3>
+            <p style={{ color: COLORS.textDim, fontSize: 13, margin: "0 0 18px" }}>
+              Long options: you pay theta every day to hold gamma. As expiry approaches, both accelerate — the payoff only comes if the stock moves.
+            </p>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
+                <XAxis dataKey="days" stroke={COLORS.muted} tick={{ fill: COLORS.textDim, fontSize: 11 }}
+                  label={{ value: "Days to Expiry", position: "insideBottom", offset: -2, fill: COLORS.muted, fontSize: 11 }} />
+                <YAxis stroke={COLORS.muted} tick={{ fill: COLORS.textDim, fontSize: 11 }} />
+                <Tooltip contentStyle={{ background: COLORS.bg, border: `1px solid ${COLORS.border}`, borderRadius: 6 }}
+                  labelStyle={{ color: COLORS.textDim }} itemStyle={{ color: COLORS.text }} />
+                <Legend wrapperStyle={{ color: COLORS.textDim, fontSize: 11 }} />
+                <Line type="monotone" dataKey="gamma" stroke={COLORS.green} strokeWidth={2} dot={false} name="Gamma (×1000)" />
+                <Line type="monotone" dataKey="thetaAbs" stroke={COLORS.accent} strokeWidth={2} dot={false} name="|Theta| (×100)" />
+              </LineChart>
+            </ResponsiveContainer>
+            <div style={{ marginTop: 14, padding: "10px 14px", background: COLORS.bg, borderRadius: 6, borderLeft: `3px solid ${COLORS.muted}` }}>
+              <span style={{ color: COLORS.textDim, fontSize: 12 }}>
+                <span style={{ color: COLORS.green }}>Short gamma</span> desks earn theta but face accelerating losses near expiry on large moves. This is why risk analysts watch short-gamma positions most carefully close to expiration.
+              </span>
+            </div>
+          </div>
+        );
+      }
+
+      const TABS = [
+        { id: "greeks", label: "Greeks Δ Γ ν Θ" },
+        { id: "iv", label: "Implied Vol σ" },
+        { id: "convexity", label: "Gamma = Convexity" },
+        { id: "pnl", label: "P&L Explain" },
+      ];
+
+      function App() {
+        const [activeGreek, setActiveGreek] = useState(0);
+        const [activeTab, setActiveTab] = useState("greeks");
+
+        return (
+          <div style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.text, fontFamily: "'DM Sans', sans-serif", padding: "32px 24px" }}>
+            <div style={{ maxWidth: 900, margin: "0 auto" }}>
+
+              <div style={{ marginBottom: 28 }}>
+                <div style={{ fontFamily: "'Space Mono', monospace", fontSize: 10, letterSpacing: 3, color: COLORS.accentDim, marginBottom: 8 }}>
+                  MARKET RISK — INTERVIEW PREP
+                </div>
+                <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 38, margin: "0 0 8px", lineHeight: 1.1 }}>
+                  Option Greeks &<br />
+                  <span style={{ color: COLORS.accent }}>P&L Explain</span>
+                </h1>
+                <p style={{ color: COLORS.textDim, fontSize: 14, maxWidth: 520 }}>
+                  A risk analyst's reference. Each Greek is a risk factor. P&L Explain is how you prove you understand them all.
+                </p>
+              </div>
+
+              <div style={{ display: "flex", gap: 6, marginBottom: 24, flexWrap: "wrap" }}>
+                {TABS.map(tab => (
+                  <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+                    background: activeTab === tab.id ? COLORS.accent + "18" : "transparent",
+                    border: `1px solid ${activeTab === tab.id ? COLORS.accent : COLORS.border}`,
+                    color: activeTab === tab.id ? COLORS.accent : COLORS.textDim,
+                    borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontSize: 13,
+                    fontFamily: "'Space Mono', monospace", transition: "all 0.15s",
+                  }}>{tab.label}</button>
+                ))}
+              </div>
+
+              {activeTab === "greeks" && (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
+                    {greeks.map((g, i) => (
+                      <GreekCard key={g.id} greek={g} isActive={activeGreek === i} onClick={() => setActiveGreek(i)} />
+                    ))}
+                  </div>
+                  <div style={{ marginBottom: 20 }}>
+                    <GreekChart greek={greeks[activeGreek]} />
+                  </div>
+                  <GammaTheta />
+                </>
+              )}
+
+              {activeTab === "iv" && <ImpliedVolSection />}
+              {activeTab === "convexity" && <ConvexitySection />}
+              {activeTab === "pnl" && <PnLExplainSection />}
+
+              <div style={{ marginTop: 24, padding: "14px 18px", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
+                <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 10, color: COLORS.accentDim, letterSpacing: 2 }}>KEY FORMULA — </span>
+                <span style={{ color: COLORS.textDim, fontSize: 12 }}>
+                  P&L ≈ <span style={{ color: COLORS.blue }}>Δ·ΔS</span> + <span style={{ color: COLORS.green }}>½Γ·ΔS²</span> + <span style={{ color: COLORS.purple }}>ν·Δσ</span> + <span style={{ color: COLORS.accent }}>Θ·Δt</span> + unexplained. The risk analyst's job is to explain every dollar — and challenge any gap.
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>
