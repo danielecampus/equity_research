@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Greeks lab — equity exotics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#E9EEF1; --panel:#FFFFFF; --ink:#18242E; --muted:#56656F; --line:#C9D3DA; --grid:#E3E9ED;
+  --curve:#1C5D8A; --long:#23714F; --short:#A8323F; --barrier:#B06F12; --strike:#5E4A9C;
+  --shade:rgba(176,111,18,.09); --chip:#EDF2F6; --chipOn:#1C5D8A; --chipOnInk:#FFFFFF;
+  --sans:"Libre Franklin", "Helvetica Neue", Arial, sans-serif;
+  --serif:"Source Serif 4", Georgia, "Times New Roman", serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10171D; --panel:#18222A; --ink:#DCE5EB; --muted:#93A3AE; --line:#2C3A45; --grid:#22303A;
+    --curve:#6DB2E3; --long:#57B98A; --short:#E07581; --barrier:#E0A548; --strike:#A995E6;
+    --shade:rgba(224,165,72,.10); --chip:#20303B; --chipOn:#6DB2E3; --chipOnInk:#0E1419;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10171D; --panel:#18222A; --ink:#DCE5EB; --muted:#93A3AE; --line:#2C3A45; --grid:#22303A;
+  --curve:#6DB2E3; --long:#57B98A; --short:#E07581; --barrier:#E0A548; --strike:#A995E6;
+  --shade:rgba(224,165,72,.10); --chip:#20303B; --chipOn:#6DB2E3; --chipOnInk:#0E1419;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--curve);outline-offset:2px}
+.wrap{max-width:1320px;margin:0 auto;padding:18px 18px 40px}
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:14px 28px;margin-bottom:16px}
+.brand h1{font-family:var(--serif);font-weight:600;font-size:2.1rem;line-height:1.05;margin:0;letter-spacing:-.01em}
+.brand p{margin:6px 0 0;color:var(--muted);max-width:60ch}
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;max-width:100%;border-bottom:1px solid var(--line)}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{background:none;border:0;padding:9px 12px 10px;cursor:pointer;color:var(--muted);font-weight:500;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--curve);font-weight:600}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.lab{display:grid;gap:14px;grid-template-columns:290px minmax(0,1fr) 340px;
+  grid-template-areas:"controls stage notes" "controls readout notes" "controls pnl notes";align-items:start}
+.stage{grid-area:stage;padding:12px 12px 8px}
+.readout{grid-area:readout;padding:14px 16px}
+.controls{grid-area:controls;padding:14px 14px 6px}
+.notes{grid-area:notes;padding:16px 18px}
+.pnl{grid-area:pnl;padding:14px 16px}
+@media (max-width:1180px){
+  .lab{grid-template-columns:280px minmax(0,1fr);grid-template-areas:"stage stage" "readout readout" "controls notes" "pnl pnl"}
+}
+@media (max-width:760px){
+  .wrap{padding:12px 10px 32px}
+  .brand h1{font-size:1.7rem}
+  .lab{grid-template-columns:minmax(0,1fr);grid-template-areas:"stage" "readout" "controls" "notes" "pnl"}
+  .stage{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;box-shadow:0 6px 14px -10px rgba(0,0,0,.35)}
+}
+.greeks{display:flex;gap:10px 14px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:6px}
+.greeks::-webkit-scrollbar{display:none}
+.ggroup{display:flex;align-items:center;gap:4px;flex:none}
+.ggroup .gl{font-size:.78rem;color:var(--muted);margin-right:2px}
+.pill{border:1px solid var(--line);background:var(--chip);border-radius:999px;padding:4px 11px;cursor:pointer;font-size:.88rem;font-weight:500}
+.pill[aria-pressed="true"]{background:var(--chipOn);border-color:var(--chipOn);color:var(--chipOnInk)}
+.chart-wrap{position:relative}
+canvas{display:block;width:100%;height:400px;touch-action:pan-y;cursor:crosshair}
+@media (max-width:760px){canvas{height:230px}}
+.busy{position:absolute;top:10px;right:14px;font-size:.8rem;color:var(--muted);background:var(--panel);padding:2px 8px;border-radius:6px;border:1px solid var(--line);display:none}
+.legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:.8rem;color:var(--muted);padding:4px 4px 2px}
+.legend label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.sw{display:inline-block;width:18px;height:0;border-top:2px solid var(--curve);vertical-align:middle;margin-right:4px}
+.sw.d{border-top-style:dashed;opacity:.6}
+.ro-top{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+.ro-val{font-size:1.9rem;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.ro-val.pos{color:var(--long)} .ro-val.neg{color:var(--short)}
+.ro-name{color:var(--muted)}
+.badge{font-size:.78rem;padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.badge.long{color:var(--long)} .badge.short{color:var(--short)}
+.readout p{margin:8px 0 0;max-width:78ch}
+.readout .regime{color:var(--muted);font-size:.92rem}
+.ctl{display:block;margin:0 0 13px}
+.ctl .lbl{display:flex;justify-content:space-between;gap:8px;font-size:.86rem;color:var(--muted);margin-bottom:4px}
+.ctl output{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--curve);margin:0}
+select{width:100%;padding:7px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel)}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{flex:1;background:var(--panel);border:0;padding:7px 6px;cursor:pointer;font-size:.86rem;font-weight:500}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--chipOn);color:var(--chipOnInk)}
+.seg.posseg button[data-v="1"][aria-pressed="true"]{background:var(--long);color:#fff}
+.seg.posseg button[data-v="-1"][aria-pressed="true"]{background:var(--short);color:#fff}
+.ctl-sep{border:0;border-top:1px solid var(--line);margin:14px 0}
+.notes h3,.pnl h3,.sk h3,.cheat h3{font-size:1rem;margin:0 0 6px;font-weight:600}
+.notes h3+p{margin-top:0}
+.notes p,.sk p,.cheat p,.cheat li{font-family:var(--serif);font-size:1rem;line-height:1.55;margin:0 0 14px}
+.notes .def{color:var(--muted)}
+.callout{border-left:3px solid var(--barrier);padding:8px 12px;background:var(--shade);border-radius:0 8px 8px 0;margin:0 0 14px}
+.callout p{margin:0 0 6px}
+.nums{font-family:var(--sans);font-variant-numeric:tabular-nums;font-size:.9rem}
+.pnl .row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:560px){.pnl .row3{grid-template-columns:1fr}}
+.pnl p.hint{color:var(--muted);font-size:.9rem;margin:0 0 12px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:.9rem}
+td,th{padding:5px 8px;text-align:right;border-bottom:1px solid var(--grid)}
+td:first-child,th:first-child{text-align:left}
+tr.tot td{font-weight:600;border-top:1px solid var(--line)}
+.tscroll{overflow-x:auto}
+.good{color:var(--long)} .bad{color:var(--short)}
+.verdict{margin:10px 0 0;font-size:.92rem}
+/* skew tab */
+.sk{display:grid;gap:14px;grid-template-columns:290px minmax(0,1fr);grid-template-areas:"skc c1" "skc c2" "skc c3" "skt skt";align-items:start}
+.sk .skc{grid-area:skc;padding:14px}
+.sk .c1{grid-area:c1} .sk .c2{grid-area:c2} .sk .c3{grid-area:c3} .sk .skt{grid-area:skt}
+.sk .panel.cp{padding:12px 14px}
+.sk canvas{height:260px}
+.sk .skt{padding:18px 20px;columns:2 34ch;column-gap:36px}
+.sk .skt h3{break-after:avoid}
+.sk .skt p{break-inside:avoid}
+@media (max-width:900px){.sk{grid-template-columns:minmax(0,1fr);grid-template-areas:"skc" "c1" "c2" "c3" "skt"}}
+.cap{font-size:.9rem;color:var(--muted);margin:2px 0 6px}
+/* cheat */
+.cheat{display:grid;gap:14px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.cheat .panel{padding:16px 18px}
+.cheat .wide{grid-column:1/-1}
+@media (max-width:900px){.cheat{grid-template-columns:minmax(0,1fr)}}
+.cheat td,.cheat th{text-align:center}
+.cheat td:first-child,.cheat th:first-child{text-align:left}
+.cheat .p{color:var(--long);font-weight:600}.cheat .m{color:var(--short);font-weight:600}
+.cheat ul{padding-left:18px;margin:0}
+.matrix td{text-align:left}
+.matrix th{text-align:left;color:var(--muted);font-weight:500}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div class="brand">
+    <h1>Greeks lab</h1>
+    <p>How spot, volatility and time move the risk of equity structured products. Drag across any chart to move spot.</p>
+  </div>
+  <nav class="tabs" role="tablist" id="tabs">
+    <button role="tab" data-tab="vanilla" aria-selected="true">Vanilla</button>
+    <button role="tab" data-tab="digital" aria-selected="false">Digital</button>
+    <button role="tab" data-tab="barrier" aria-selected="false">Barrier</button>
+    <button role="tab" data-tab="autocall" aria-selected="false">Autocallable</button>
+    <button role="tab" data-tab="skew" aria-selected="false">Skew and spot–vol</button>
+    <button role="tab" data-tab="cheat" aria-selected="false">Cheat sheet</button>
+  </nav>
+</header>
+
+<main>
+<section class="lab" id="lab">
+  <div class="stage panel">
+    <div class="greeks" id="greeks"></div>
+    <div class="chart-wrap"><canvas id="chart" aria-label="Greek profile against spot"></canvas><div class="busy" id="busy">Pricing…</div></div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="readout panel" id="readout" aria-live="polite"></div>
+  <aside class="controls panel" id="controls"></aside>
+  <div class="notes panel" id="notes"></div>
+  <div class="pnl panel" id="pnl"></div>
+</section>
+
+<section class="sk" id="skew" hidden>
+  <aside class="panel skc" id="skc"></aside>
+  <div class="panel cp c1">
+    <h3>The smile: implied vol by strike</h3>
+    <p class="cap">Solid: skewed smile. Dashed: flat vol at the ATM level. Negative skew means downside strikes trade at higher vol.</p>
+    <canvas id="sk1"></canvas>
+  </div>
+  <div class="panel cp c2">
+    <h3>What the smile says about the distribution</h3>
+    <p class="cap">Risk-neutral density of the price at maturity, implied from the smile (Breeden–Litzenberger). Dashed: lognormal with flat vol.</p>
+    <canvas id="sk2"></canvas>
+    <p class="cap nums" id="sk2r"></p>
+  </div>
+  <div class="panel cp c3">
+    <h3>When spot moves, where does the smile go?</h3>
+    <p class="cap">Dashed: smile today with spot at 100. Solid: smile after the spot move under the chosen dynamic.</p>
+    <canvas id="sk3"></canvas>
+    <div id="sk3r" class="nums"></div>
+  </div>
+  <div class="panel skt" id="skt"></div>
+</section>
+
+<section class="cheat" id="cheat" hidden></section>
+</main>
+</div>
+
+<script>
+/* ================= math ================= */
+function N(x){const X=Math.abs(x);let c;if(X>37)c=0;else{const e=Math.exp(-X*X/2);if(X<7.07106781186547){let b=3.52624965998911e-02*X+0.700383064443688;b=b*X+6.37396220353165;b=b*X+33.912866078383;b=b*X+112.079291497871;b=b*X+221.213596169931;b=b*X+220.206867912376;c=e*b;b=8.83883476483184e-02*X+1.75566716318264;b=b*X+16.064177579207;b=b*X+86.7807322029461;b=b*X+296.564248779674;b=b*X+637.333633378831;b=b*X+793.826512519948;b=b*X+440.413735824752;c=c/b;}else{let b=X+0.65;b=X+4/b;b=X+3/b;b=X+2/b;b=X+1/b;c=e/b/2.506628274631;}}return x>0?1-c:c;}
+function npdf(x){return Math.exp(-0.5*x*x)/2.5066282746310002;}
+function bs(S,K,T,s,r,q,isCall){
+  if(T<=1e-10)return Math.max(isCall?S-K:K-S,0);
+  const sq=s*Math.sqrt(T),d1=(Math.log(S/K)+(r-q+.5*s*s)*T)/sq,d2=d1-sq;
+  return isCall?S*Math.exp(-q*T)*N(d1)-K*Math.exp(-r*T)*N(d2):K*Math.exp(-r*T)*N(-d2)-S*Math.exp(-q*T)*N(-d1);
+}
+function digital(S,K,T,s,r,q,isCall,pay){
+  if(T<=1e-10)return (isCall?S>K:S<K)?pay:0;
+  const sq=s*Math.sqrt(T),d2=(Math.log(S/K)+(r-q-.5*s*s)*T)/sq;
+  return pay*Math.exp(-r*T)*N(isCall?d2:-d2);
+}
+function bsVegaUnit(S,K,T,s,r,q){const sq=s*Math.sqrt(T),d1=(Math.log(S/K)+(r-q+.5*s*s)*T)/sq;return S*Math.exp(-q*T)*npdf(d1)*Math.sqrt(T);}
+/* Reiner–Rubinstein knock-in prices (continuous monitoring, no rebate) */
+function rrIn(down,isCall,S,K,H,T,s,r,q){
+  const b=r-q,sq=s*Math.sqrt(T),mu=(b-.5*s*s)/(s*s),phi=isCall?1:-1,eta=down?1:-1;
+  const x1=Math.log(S/K)/sq+(1+mu)*sq,x2=Math.log(S/H)/sq+(1+mu)*sq,y1=Math.log(H*H/(S*K))/sq+(1+mu)*sq,y2=Math.log(H/S)/sq+(1+mu)*sq;
+  const eq=Math.exp(-q*T),er=Math.exp(-r*T),hs=H/S,p1=Math.pow(hs,2*(mu+1)),p2=Math.pow(hs,2*mu);
+  const A=phi*S*eq*N(phi*x1)-phi*K*er*N(phi*x1-phi*sq),B=phi*S*eq*N(phi*x2)-phi*K*er*N(phi*x2-phi*sq);
+  const C=phi*S*eq*p1*N(eta*y1)-phi*K*er*p2*N(eta*y1-eta*sq),D=phi*S*eq*p1*N(eta*y2)-phi*K*er*p2*N(eta*y2-eta*sq);
+  if(down&&isCall)return K>H?C:A-B+D;
+  if(!down&&isCall)return K>H?A:B-C+D;
+  if(down&&!isCall)return K>H?B-C+D:A;
+  return K>H?A-B+D:C;
+}
+function barrier(type,S,K,H,T,s,r,q){
+  const down=type[0]==='D',isIn=type[1]==='I',isCall=type[2]==='C';
+  const van=bs(S,K,T,s,r,q,isCall);
+  const knocked=down?S<=H:S>=H;
+  if(knocked)return isIn?van:0;
+  if(T<=1e-10)return isIn?0:van;
+  const inV=Math.max(0,Math.min(van,rrIn(down,isCall,S,K,H,T,s,r,q)));
+  return isIn?inV:van-inV;
+}
+function euroDIP(S,K,H,T,s,r,q){
+  if(H>=K)return bs(S,K,T,s,r,q,false);
+  return bs(S,H,T,s,r,q,false)+(K-H)*digital(S,H,T,s,r,q,false,1);
+}
+/* finite-difference greeks on any price function f(S, vol, T) */
+function greekAt(f,S,sig,T,g){
+  const hS=Math.max(S*1e-3,1e-4),hv=1e-3,dt=Math.min(1/365,T*0.5);
+  switch(g){
+    case 'price':return f(S,sig,T);
+    case 'delta':return (f(S+hS,sig,T)-f(S-hS,sig,T))/(2*hS);
+    case 'gamma':return (f(S+hS,sig,T)-2*f(S,sig,T)+f(S-hS,sig,T))/(hS*hS);
+    case 'speed':{const h=hS*2;return (f(S+2*h,sig,T)-2*f(S+h,sig,T)+2*f(S-h,sig,T)-f(S-2*h,sig,T))/(2*h*h*h);}
+    case 'vega':return (f(S,sig+hv,T)-f(S,sig-hv,T))/(2*hv)*0.01;
+    case 'vanna':return (f(S+hS,sig+hv,T)-f(S+hS,sig-hv,T)-f(S-hS,sig+hv,T)+f(S-hS,sig-hv,T))/(4*hS*hv)*0.01;
+    case 'volga':return (f(S,sig+hv,T)-2*f(S,sig,T)+f(S,sig-hv,T))/(hv*hv)*1e-4;
+    case 'theta':return (f(S,sig,T-dt)-f(S,sig,T))/dt/365;
+    case 'charm':{const d0=(f(S+hS,sig,T)-f(S-hS,sig,T))/(2*hS),d1=(f(S+hS,sig,T-dt)-f(S-hS,sig,T-dt))/(2*hS);return (d1-d0)/dt/365;}
+  }
+  return NaN;
+}
+
+/* ================= autocallable Monte Carlo ================= */
+const AC={Z:null,N:0,MZ:20};
+function ensureZ(Np){
+  if(AC.Z&&AC.N===Np)return;
+  let a=20240917>>>0;
+  const rnd=()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};
+  const Z=new Float64Array(Np*AC.MZ);
+  for(let n=0;n<Np;n+=2)for(let j=0;j<AC.MZ;j++){
+    let u=rnd();if(u<1e-12)u=1e-12;const v=rnd();const z=Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+    Z[n*AC.MZ+j]=z;if(n+1<Np)Z[(n+1)*AC.MZ+j]=-z;
+  }
+  AC.Z=Z;AC.N=Np;
+}
+function acSchedule(p,elapsedDays){
+  const dT=1/p.freq,M=Math.round(p.mat*p.freq),e=elapsedDays/365,tau=[],t=[];
+  for(let i=1;i<=M;i++){const ti=i*dT-e;if(ti>1e-6){tau.push(i*dT);t.push(ti);}}
+  return {tau,t};
+}
+function buildE(p,sig,elapsedDays){
+  const sch=acSchedule(p,elapsedDays),K=sch.t.length,Np=AC.N,MZ=AC.MZ,Z=AC.Z;
+  const r=p.r/100,q=p.q/100,mu=r-q-.5*sig*sig,E=new Float64Array(Np*K),sd=[];
+  for(let j=0;j<K;j++)sd.push(Math.sqrt(j===0?sch.t[0]:sch.t[j]-sch.t[j-1]));
+  for(let n=0;n<Np;n++){let W=0;const zb=n*MZ,eb=n*K;for(let j=0;j<K;j++){W+=sd[j]*Z[zb+j];E[eb+j]=Math.exp(mu*sch.t[j]+sig*W);}}
+  return {E,K,tau:sch.tau,t:sch.t,DF:sch.t.map(t=>Math.exp(-r*t))};
+}
+function acPrice(p,B,S0){
+  const s=S0/100,ac=p.ac/100,cb=p.cb/100,ki=p.ki/100,w=p.smooth/100,phoenix=p.style==='phoenix';
+  const cpnPer=p.cpn/p.freq,cpnAcc=B.tau.map(t=>p.cpn*t),K=B.K,E=B.E,DF=B.DF,Np=AC.N;
+  const rp=(x,L)=>{if(w<=0)return x>=L?1:0;const u=(x-L)/w+.5;return u<=0?0:u>=1?1:u;};
+  let tot=0;
+  for(let n=0;n<Np;n++){
+    let alive=1,v=0;const eb=n*K;
+    for(let j=0;j<K;j++){
+      const x=s*E[eb+j],df=DF[j];
+      if(phoenix)v+=alive*rp(x,cb)*cpnPer*df;
+      if(j<K-1){
+        const pc=rp(x,ac);
+        if(pc>0){v+=alive*pc*(100+(phoenix?0:cpnAcc[j]))*df;alive*=1-pc;if(alive<=0)break;}
+      }else{
+        const kw=rp(x,ki),R=kw*100+(1-kw)*100*x;
+        if(phoenix)v+=alive*R*df;
+        else{const pc=rp(x,ac);v+=alive*(pc*(100+cpnAcc[j])+(1-pc)*R)*df;}
+      }
+    }
+    tot+=v;
+  }
+  return tot/Np;
+}
+function d1arr(a){const n=a.length,o=new Array(n);for(let i=1;i<n-1;i++)o[i]=(a[i+1]-a[i-1])/2;o[0]=a[1]-a[0];o[n-1]=a[n-1]-a[n-2];return o;}
+function d2arr(a){const n=a.length,o=new Array(n);for(let i=1;i<n-1;i++)o[i]=a[i+1]-2*a[i]+a[i-1];o[0]=o[1];o[n-1]=o[n-2];return o;}
+function acKey(p){return JSON.stringify([p.vol,p.r,p.q,p.mat,p.freq,p.ac,p.cpn,p.style,p.cb,p.ki,p.elapsed,p.smooth,p.paths]);}
+function acCompute(p){
+  ensureZ(p.paths);
+  const sig=p.vol/100,e=p.elapsed;
+  const B0=buildE(p,sig,e),Bu=buildE(p,sig+.01,e),Bd=buildE(p,Math.max(sig-.01,.005),e),Bt=buildE(p,sig,Math.min(e+1,p.mat*365-.5));
+  const xs=[];for(let x=40;x<=160.0001;x+=1)xs.push(x);
+  const P0=xs.map(x=>acPrice(p,B0,x)),Pu=xs.map(x=>acPrice(p,Bu,x)),Pd=xs.map(x=>acPrice(p,Bd,x)),Pt=xs.map(x=>acPrice(p,Bt,x));
+  const delta=d1arr(P0),gamma=d2arr(P0),du=d1arr(Pu),dd=d1arr(Pd),dt=d1arr(Pt);
+  return {xs,B0,key:acKey(p),g:{
+    price:P0,delta,gamma,
+    vega:P0.map((_,i)=>(Pu[i]-Pd[i])/2),
+    volga:P0.map((v,i)=>Pu[i]-2*v+Pd[i]),
+    vanna:du.map((v,i)=>(v-dd[i])/2),
+    theta:Pt.map((v,i)=>v-P0[i]),
+    charm:dt.map((v,i)=>v-delta[i])}};
+}
+function interp(xs,ys,x){if(x<=xs[0])return ys[0];if(x>=xs[xs.length-1])return ys[ys.length-1];const h=xs[1]-xs[0],i=Math.min(xs.length-2,Math.floor((x-xs[0])/h)),t=(x-xs[i])/h;return ys[i]+(ys[i+1]-ys[i])*t;}
+
+/* ================= formatting ================= */
+const MINUS='\u2212';
+function fmt(v){if(!isFinite(v))return '—';const a=Math.abs(v);let s;
+  if(a===0)s='0';else if(a>=1000)s=a.toFixed(0);else if(a>=100)s=a.toFixed(1);else if(a>=10)s=a.toFixed(2);else if(a>=1)s=a.toFixed(3);else if(a>=0.001)s=a.toFixed(4);else s=a.toPrecision(2);
+  return (v<0?MINUS:'')+s;}
+function fmtS(v){return (v>0?'+':'')+fmt(v);}
+function fmtDays(d){d=Math.round(d);if(d<60)return d+(d===1?' day':' days');if(d<730)return (d/30.44).toFixed(1)+' months';return (d/365).toFixed(2)+' years';}
+const pct=v=>v.toFixed(2).replace(/\.?0+$/,'')+'%';
+
+/* ================= content ================= */
+const GREEKS={price:'Price',delta:'Delta',gamma:'Gamma',speed:'Speed',vega:'Vega',vanna:'Vanna',volga:'Volga',theta:'Theta',charm:'Charm'};
+const GROUPS=[['',['price']],['Spot',['delta','gamma','speed']],['Vol',['vega','vanna','volga']],['Time',['theta','charm']]];
+const UNITS={price:'value',delta:'per +1 pt of spot',gamma:'Δ change per +1 pt',speed:'Γ change per +1 pt',vega:'per +1 vol pt',vanna:'Δ change per +1 vol pt',volga:'vega change per +1 vol pt',theta:'per day',charm:'Δ change per day'};
+const DEF={
+ price:'What the position is worth now. Vanilla, digital and barrier are per option on one share with spot around 100; the autocallable is per 100 of notional.',
+ delta:'∂V/∂S — the P&L for a +1 move in spot. Hedging means holding the opposite amount of the underlying.',
+ gamma:'∂Δ/∂S — how fast delta changes when spot moves, i.e. how much re-hedging a move forces on you.',
+ speed:'∂Γ/∂S — how gamma itself shifts as spot moves. It tells you whether gamma grows or fades as spot walks toward or away from a strike or barrier.',
+ vega:'∂V/∂σ — the P&L for +1 implied-vol point (for example 20% to 21%).',
+ vanna:'∂Δ/∂σ = ∂Vega/∂S — how delta moves when vol moves, and how vega moves when spot moves. In equities spot and vol move against each other, so vanna is where skew and spot–vol correlation reach your P&L.',
+ volga:'∂Vega/∂σ (also called vomma) — how vega changes when vol moves. Long volga means you gain from large vol moves in either direction.',
+ theta:'The P&L from one calendar day passing, with spot and vol unchanged.',
+ charm:'∂Δ/∂t — how much delta drifts overnight with no spot move. It is a hedge adjustment you need even on a quiet day.'
+};
+const TXT={
+vanilla:{
+ price:'At expiry a call pays max(S−K, 0); before that it also carries time value, which is largest at the money and grows with vol and √T. The put mirrors it. The seller receives the premium and carries the payoff.',
+ delta:'Call delta runs from 0 (deep OTM) to about 1 (deep ITM); put delta from −1 to 0. At the money it is about ±0.5. Higher vol or longer maturity flattens the S-curve: OTM deltas rise, ITM deltas fall. Close to expiry it turns into a step at the strike, so tiny spot moves flip delta between 0 and 1.',
+ gamma:'Identical for calls and puts. A bell centred near the strike. As expiry approaches, ATM gamma explodes (it scales with 1/(σS√T)) while OTM and ITM gamma die — switch on the time curves to see it. Higher vol spreads gamma out: less at the money, more in the wings. Long options are long gamma, short options short gamma.',
+ speed:'Positive below the gamma peak and negative above it: walking toward the strike increases gamma, walking away reduces it. Near expiry speed is extreme around the money, so gamma can double on a small move.',
+ vega:'Identical for calls and puts. Peaks near the money and grows with √T, so long-dated options carry a lot of vega and little gamma, short-dated ones the opposite. Deep ITM and OTM options have little vega. Long option means long vega.',
+ vanna:'Identical for calls and puts, about zero at the money. The rule to remember: vol up pulls every delta toward ±0.5. OTM deltas grow (more vol makes the strike reachable), ITM deltas shrink (more vol makes losing the intrinsic value possible). For a long option vanna is positive below the strike and negative above.',
+ volga:'About zero at the money, positive in both wings, largest roughly 1–1.5 standard moves away from the strike. That is why OTM options are long vol-of-vol and why the wings trade at higher vols (smile curvature). A short OTM strangle is short volga: a vol spike increases its short vega exactly when it hurts.',
+ theta:'Most negative at the money and accelerating toward expiry (roughly 1/√T): it is the rent paid for long gamma. Deep ITM puts can have positive theta when rates are positive, since you are waiting to receive the strike. Short options earn theta and pay gamma.',
+ charm:'As days pass, OTM deltas decay toward 0 and ITM deltas toward ±1: delta pins to the final payoff. The effect is largest about one standard move from the strike and near expiry. It is why hedges change over a weekend with no market move.'
+},
+digital:{
+ price:'Pays 100 if the underlying finishes above (call) or below (put) the strike. The price is about 100·e^(−rT)·N(d₂), a risk-neutral probability. An ATM call is a bit below 50. Near expiry the curve becomes a step between 0 and 100.',
+ delta:'Shaped like a vanilla gamma: a bump centred at the strike, with height proportional to 1/(σ√T). An ATM digital near expiry has a delta of several times its payout per 100 of spot — impossible to hedge cleanly. This is the pin risk inside every coupon, autocall trigger and European barrier.',
+ gamma:'Shaped like vanilla speed. For a long digital call it is positive below the strike, zero at it and negative above. The same long position is long gamma when OTM and short gamma when ITM, and the switch gets sharper every day toward expiry.',
+ speed:'The third derivative of a step: it changes sign twice around the strike and is huge near expiry. Mainly a warning that delta-hedging a digital near its strike is unstable.',
+ vega:'Changes sign at the strike. OTM digital call: more vol means more chance to finish ITM, so positive vega. ITM: more vol means more chance to fall back, so negative vega. At the strike vega is about zero, but vanna and volga are large there: zero vega does not mean no vol risk.',
+ vanna:'Large and single-signed around the strike: a vol move shifts the whole delta bump. Combined with equity spot–vol correlation, this is where skew-driven P&L on digitals comes from.',
+ volga:'Because digital vega flips sign at the strike, volga is largest where vega changes fastest. Read the sign at your spot: it tells you whether a vol shock makes your vega bigger or smaller.',
+ theta:'An OTM digital loses value as days pass (less time to get there); an ITM digital gains (the payout is becoming certain). Right at the strike theta is near zero but charm is enormous.',
+ charm:'Time concentrates delta at the strike: the bump grows taller and narrower every day. The hedge has to grow as expiry approaches even if spot sits still.'
+},
+barrier:{
+ price:'Continuous monitoring, no rebate. Past the barrier the chart shows what the option becomes once touched: a vanilla for knock-ins, zero for knock-outs.',
+ delta:'Delta is discontinuous at the barrier. When the level trades, the option changes nature (becomes a vanilla or dies) and the hedge must be adjusted in one go. If the market gaps through the level, you cannot trade at it: that is gap risk.',
+ gamma:'Reverse barriers — where the barrier sits in the region where the option is in the money (up-and-out call, down-and-in or down-and-out put with strike above barrier) — have huge gamma near the level, often with the opposite sign to a vanilla. Regular barriers (barrier out of the money) are much tamer.',
+ speed:'Speed near a barrier shows how violently gamma builds as spot approaches. Near expiry it becomes extreme on both sides of reverse barriers.',
+ vega:'Near a barrier vega is about the probability of touching. For knock-outs, more vol means more chance to die (negative vega); for knock-ins, more chance to come alive (positive). Far from the barrier the vanilla vega dominates.',
+ vanna:'Vanna near a barrier is large and is one reason barriers are priced with vanna–volga or local/stochastic-vol models rather than flat Black–Scholes: the smile and spot–vol dynamics change the touch probability.',
+ volga:'Barrier volga is often of the opposite sign on either side of the level. Large volga means the price depends on vol-of-vol, not just the vol level.',
+ theta:'Near a knock-out, theta can be positive: every day survived is one less day in which to be knocked out. Near a knock-in, time passing reduces the chance of activation.',
+ charm:'Near expiry and near the barrier, delta drifts fast even with no spot move, because the touch probability changes quickly with time.'
+},
+autocall:{
+ price:'Note value per 100 notional. Far above the trigger it is close to the early-redemption value; far below the KI it is about 100 × performance (the investor effectively owns the stock). In between, the coupons compensate the investor for the short KI put.',
+ delta:'The investor\'s delta is positive: the note behaves like a partial long stock position. It is small when a call is almost certain (spot well above the trigger) and largest near the KI close to maturity, where the redemption drops from 100 to the KI level. Just before an observation date a bump builds around the trigger and coupon barrier. The issuer\'s delta is the mirror image, so the desk hedges by buying stock.',
+ gamma:'Around the KI near maturity, the issuer (long the KI put) is long gamma just above the level and short gamma just below — the digital inside a European KI. Around the trigger on observation dates the issuer is short a digital, so gamma flips sign across the trigger. Move "time elapsed" toward an observation date to watch it build.',
+ vega:'The issuer is usually long vega, mainly through the KI put; structured-product issuance is often cited as a reason dealers recycle long-dated vol into the market. Vega shrinks when spot is far above the trigger (a call is near certain), and near maturity it changes sign across the KI.',
+ vanna:'In a sell-off, spot falls and vol rises together. Vanna tells you how much delta you gain or lose from the vol move alone — this is where the skew and spot–vol assumptions change the hedge ratio.',
+ volga:'Mixed: the KI put adds convexity in vol, the digitals subtract it near the triggers. Non-zero volga is why the price depends on the smile model and vol-of-vol, not just the ATM level.',
+ theta:'For the investor, time passing with spot comfortably above the KI is positive: coupons get closer and the KI becomes less likely. Near the KI close to maturity it turns strongly negative. For the issuer it is the reverse.',
+ charm:'Delta drifts sharply as observation dates and maturity approach, around both the trigger and the KI. A key reason these books need re-hedging on quiet days too.'
+}};
+const BTYPES={
+ DIP:{n:'Down-and-in put',K:100,H:70,t:'Becomes a vanilla put the moment spot touches H — the investor\'s short leg in an autocallable. Far above H it is a cheap OTM put. Approaching H its delta becomes more negative than the equivalent vanilla\'s, and gamma and vega climb: the holder is long gamma and long vega there. At the touch it turns into a vanilla put that is already in the money: delta jumps back, gamma drops, and part of the hedge must be unwound at that instant.'},
+ EDIP:{n:'Down-and-in put, observed at maturity',K:100,H:70,t:'Same payoff, but the barrier is checked only on the final date — the usual KI of recent autocallables. It equals a put struck at H plus (K−H) digital puts at H. Months before expiry it is smooth; in the last weeks the digital dominates: a delta and gamma spike at H whose size scales with K−H, vega that flips sign at H, and strong skew sensitivity. Compare the time curves with the continuous version.'},
+ DOP:{n:'Down-and-out put',K:100,H:70,t:'A put that dies at H. Its value peaks between H and K. Near H its delta turns positive (a further fall brings you closer to losing everything), and gamma and vega turn negative. Holding it near the barrier feels like being short an option.'},
+ UOC:{n:'Up-and-out call',K:100,H:130,t:'Barrier in the money: a reverse knock-out. Value grows with spot, then collapses to zero at H. Close to H delta is strongly negative, gamma very negative, vega negative and theta positive. Near expiry and just below H, delta can reach several times the notional. Desks book a shifted barrier (for example 1–2% closer) to charge for the hedging slippage.'},
+ UIC:{n:'Up-and-in call',K:100,H:120,t:'A vanilla call that switches on at H. The call is already ITM when the barrier trades, so this is a reverse barrier: value is continuous at H but delta and gamma jump there. Below H it carries high vega, since vol creates the chance to activate.'},
+ DOC:{n:'Down-and-out call',K:100,H:85,t:'Barrier out of the money (regular). The call is nearly worthless near H anyway, so knocking out removes little value: greeks look like a slightly cheaper vanilla, with a delta kink at H. Much easier to hedge than a reverse barrier.'},
+ DIC:{n:'Down-and-in call',K:100,H:85,t:'Regular barrier: spot must first fall to H and then recover above K. Cheap and long vega; at H it becomes an OTM vanilla call, so the transition is smooth.'},
+ UOP:{n:'Up-and-out put',K:100,H:120,t:'Regular barrier above the strike: the put is already OTM at H, so knocking out removes little value. Delta kink at H, otherwise tame greeks.'},
+ UIP:{n:'Up-and-in put',K:100,H:120,t:'Regular barrier: spot must rise to H and then fall below K. Cheap, long vega, activates as an OTM put.'}
+};
+
+/* ================= state ================= */
+const ST={
+ tab:'vanilla',greek:'delta',ghosts:true,
+ pos:{vanilla:1,digital:1,barrier:1,autocall:-1},
+ p:{
+  vanilla:{kind:'call',S:100,K:100,vol:20,days:180,r:3,q:1.5},
+  digital:{kind:'call',S:100,K:100,vol:20,days:60,r:3,q:1.5,skew:-3},
+  barrier:{kind:'DIP',S:100,K:100,H:70,vol:25,days:365,r:3,q:1.5},
+  autocall:{style:'phoenix',S:100,vol:25,mat:3,freq:2,ac:100,cpn:8,cb:70,ki:60,elapsed:0,smooth:3,paths:10000,r:3,q:2}
+ },
+ scen:{dS:-5,dv:3,days:1}
+};
+const common=[
+ {k:'S',label:'Spot',min:40,max:160,step:.5,fmt:v=>v.toFixed(1)},
+];
+const volC={k:'vol',label:'Implied vol',min:5,max:80,step:.5,fmt:v=>v.toFixed(1)+'%'};
+const daysC={k:'days',label:'Time to expiry',min:1,max:1095,log:true,fmt:fmtDays};
+const rq=[{k:'r',label:'Interest rate',min:-1,max:6,step:.25,fmt:pct},{k:'q',label:'Dividend yield',min:0,max:6,step:.25,fmt:pct}];
+const CTRL={
+ vanilla:[{k:'kind',type:'seg',label:'Option',opts:[['call','Call'],['put','Put']]},...common,{k:'K',label:'Strike',min:60,max:140,step:1,fmt:v=>v.toFixed(0)},volC,daysC,...rq],
+ digital:[{k:'kind',type:'seg',label:'Digital pays 100 if spot ends',opts:[['call','Above K'],['put','Below K']]},...common,{k:'K',label:'Strike',min:60,max:140,step:1,fmt:v=>v.toFixed(0)},volC,daysC,
+   {k:'skew',label:'Skew (vol pts per 10% moneyness)',min:-8,max:2,step:.5,fmt:v=>fmtS(v)},...rq],
+ barrier:[{k:'kind',type:'select',label:'Barrier type',opts:Object.entries(BTYPES).map(([k,v])=>[k,v.n]),rerender:true},...common,
+   {k:'K',label:'Strike',min:60,max:140,step:1,fmt:v=>v.toFixed(0)},{k:'H',label:'Barrier',min:45,max:155,step:1,fmt:v=>v.toFixed(0)},volC,daysC,...rq],
+ autocall:[{k:'style',type:'seg',label:'Coupon style',opts:[['phoenix','Phoenix'],['snowball','Snowball']],rerender:true},...common,volC,
+   {k:'mat',label:'Maturity',min:1,max:5,step:1,fmt:v=>v+(v>1?' years':' year'),rerender:true},
+   {k:'freq',type:'select',label:'Observations',num:true,opts:[[1,'Annual'],[2,'Semi-annual'],[4,'Quarterly']],rerender:true},
+   {k:'ac',label:'Autocall trigger',min:80,max:115,step:1,fmt:v=>v+'%'},
+   {k:'cpn',label:'Coupon per year',min:1,max:20,step:.5,fmt:pct},
+   {k:'cb',label:'Coupon barrier',min:40,max:110,step:1,fmt:v=>v+'%',show:p=>p.style==='phoenix'},
+   {k:'ki',label:'Knock-in barrier (at maturity)',min:30,max:95,step:1,fmt:v=>v+'%'},
+   {k:'elapsed',label:'Time elapsed since issue',min:0,max:p=>p.mat*365-2,step:1,fmt:v=>fmtDays(v)},
+   {k:'smooth',label:'Digital smoothing width',min:0,max:6,step:.5,fmt:v=>v+'%'},
+   {k:'paths',type:'select',label:'Monte Carlo paths',num:true,opts:[[5000,'5,000 (fast)'],[10000,'10,000'],[20000,'20,000 (smooth)']]},
+   ...rq]
+};
+
+/* ================= chart ================= */
+function cssv(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+function niceTicks(a,b,n){const span=b-a;if(!(span>0))return [a];const raw=span/n,mag=Math.pow(10,Math.floor(Math.log10(raw))),e=raw/mag,f=e<1.5?1:e<3?2:e<7?5:10,st=f*mag,out=[];for(let v=Math.ceil(a/st)*st;v<=b+st*1e-6;v+=st)out.push(Math.abs(v)<st*1e-9?0:v);return out;}
+function axisFmt(v){const a=Math.abs(v);if(a===0)return '0';if(a>=100)return (v<0?MINUS:'')+a.toFixed(0);if(a>=1)return (v<0?MINUS:'')+(+a.toFixed(2)).toString();return (v<0?MINUS:'')+(+a.toPrecision(2)).toString();}
+function drawChart(cv,cfg){
+  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)return;
+  cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
+  const col={ink:cssv('--ink'),muted:cssv('--muted'),grid:cssv('--grid'),line:cssv('--line'),curve:cssv('--curve'),barrier:cssv('--barrier'),strike:cssv('--strike'),shade:cssv('--shade'),panel:cssv('--panel')};
+  const pad={l:52,r:12,t:22,b:28};const pw=w-pad.l-pad.r,ph=h-pad.t-pad.b;
+  const [x0,x1]=cfg.xr;let y0=Infinity,y1=-Infinity;
+  for(const v of cfg.main.ys)if(isFinite(v)){y0=Math.min(y0,v);y1=Math.max(y1,v);}
+  if(cfg.yInclude)for(const v of cfg.yInclude)if(isFinite(v)){y0=Math.min(y0,v);y1=Math.max(y1,v);}
+  if(!cfg.noZero){y0=Math.min(y0,0);y1=Math.max(y1,0);}
+  if(!isFinite(y0)){y0=-1;y1=1;}
+  if(y1-y0<1e-9){y0-=1;y1+=1;}
+  const padY=(y1-y0)*.08;y0-=padY;y1+=padY;
+  const X=x=>pad.l+(x-x0)/(x1-x0)*pw,Y=y=>pad.t+(1-(y-y0)/(y1-y0))*ph;
+  cv._map={pad,pw,x0,x1};
+  c.font='11px '+cssv('--sans');c.textBaseline='middle';
+  if(cfg.shade){c.fillStyle=col.shade;const a=X(Math.max(cfg.shade[0],x0)),b=X(Math.min(cfg.shade[1],x1));c.fillRect(a,pad.t,b-a,ph);}
+  c.strokeStyle=col.grid;c.lineWidth=1;c.fillStyle=col.muted;
+  for(const t of niceTicks(y0,y1,5)){const y=Math.round(Y(t))+.5;c.beginPath();c.moveTo(pad.l,y);c.lineTo(pad.l+pw,y);c.stroke();c.textAlign='right';c.fillText(axisFmt(t),pad.l-6,y);}
+  c.textAlign='center';c.textBaseline='top';
+  for(const t of niceTicks(x0,x1,6)){const x=Math.round(X(t))+.5;c.beginPath();c.moveTo(x,pad.t);c.lineTo(x,pad.t+ph);c.stroke();c.fillText(axisFmt(t),x,pad.t+ph+6);}
+  if(!cfg.noZero&&y0<0&&y1>0){c.strokeStyle=col.muted;c.globalAlpha=.55;c.beginPath();c.moveTo(pad.l,Math.round(Y(0))+.5);c.lineTo(pad.l+pw,Math.round(Y(0))+.5);c.stroke();c.globalAlpha=1;}
+  c.textBaseline='alphabetic';
+  let lastLab=-99;
+  for(const m of (cfg.markers||[]).slice().sort((a,b)=>a.x-b.x)){if(m.x<x0||m.x>x1)continue;const x=Math.round(X(m.x))+.5;c.strokeStyle=col[m.c]||m.c;c.setLineDash([4,3]);c.lineWidth=1.2;c.beginPath();c.moveTo(x,pad.t);c.lineTo(x,pad.t+ph);c.stroke();c.setLineDash([]);c.fillStyle=col[m.c]||m.c;c.textAlign='center';c.font='600 11px '+cssv('--sans');const yl=(x-lastLab<50)?pad.t-1:pad.t-9;c.fillText(m.label,x,yl+6);lastLab=x;}
+  c.font='11px '+cssv('--sans');
+  c.save();c.beginPath();c.rect(pad.l,pad.t,pw,ph);c.clip();
+  const line=(xs,ys,color,wd,alpha,dash)=>{c.strokeStyle=color;c.lineWidth=wd;c.globalAlpha=alpha;c.setLineDash(dash||[]);c.beginPath();let pen=false;for(let i=0;i<xs.length;i++){const v=ys[i];if(!isFinite(v)){pen=false;continue;}let yy=Y(v);yy=Math.max(-5000,Math.min(5000,yy));if(!pen){c.moveTo(X(xs[i]),yy);pen=true;}else c.lineTo(X(xs[i]),yy);}c.stroke();c.globalAlpha=1;c.setLineDash([]);};
+  (cfg.ghosts||[]).forEach((g,i)=>line(g.xs,g.ys,col[g.c]||col.curve,1.4,[.6,.42,.28][i]||.25,[5,4]));
+  line(cfg.main.xs,cfg.main.ys,col[cfg.main.c]||col.curve,2.4,1);
+  c.restore();
+  if(cfg.spot&&isFinite(cfg.spot.y)){
+    const sx=X(cfg.spot.x),sy=Math.max(pad.t,Math.min(pad.t+ph,Y(cfg.spot.y)));
+    c.strokeStyle=col.ink;c.globalAlpha=.35;c.lineWidth=1;c.beginPath();c.moveTo(sx,pad.t);c.lineTo(sx,pad.t+ph);c.stroke();c.globalAlpha=1;
+    c.fillStyle=col.panel;c.strokeStyle=col[cfg.main.c]||col.curve;c.lineWidth=2.5;c.beginPath();c.arc(sx,sy,5.5,0,Math.PI*2);c.fill();c.stroke();
+    const txt=fmt(cfg.spot.y);c.font='600 12px '+cssv('--sans');const tw=c.measureText(txt).width+10;let tx=sx+10;if(tx+tw>pad.l+pw)tx=sx-10-tw;let ty=sy-22;if(ty<pad.t)ty=sy+8;
+    c.fillStyle=col.panel;c.globalAlpha=.92;c.fillRect(tx,ty,tw,18);c.globalAlpha=1;c.fillStyle=col.ink;c.textAlign='left';c.textBaseline='middle';c.fillText(txt,tx+5,ty+9);
+  }
+  if(cfg.xLabel){c.fillStyle=col.muted;c.textAlign='right';c.textBaseline='bottom';c.font='11px '+cssv('--sans');}
+}
+function attachDrag(cv,onX){
+  const go=e=>{const m=cv._map;if(!m)return;const r=cv.getBoundingClientRect();const x=m.x0+(e.clientX-r.left-m.pad.l)/m.pw*(m.x1-m.x0);onX(Math.max(m.x0,Math.min(m.x1,x)));};
+  cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);go(e);});
+  cv.addEventListener('pointermove',e=>{if(e.buttons)go(e);});
+}
+
+/* ================= lab rendering ================= */
+const $=s=>document.querySelector(s);
+function ctlHTML(d,p){
+  const v=p[d.k];
+  if(d.type==='seg')return `<div class="ctl"><span class="lbl">${d.label}</span><div class="seg" data-k="${d.k}">${d.opts.map(o=>`<button type="button" data-v="${o[0]}" aria-pressed="${o[0]==v}">${o[1]}</button>`).join('')}</div></div>`;
+  if(d.type==='select')return `<label class="ctl"><span class="lbl">${d.label}</span><select data-k="${d.k}">${d.opts.map(o=>`<option value="${o[0]}" ${o[0]==v?'selected':''}>${o[1]}</option>`).join('')}</select></label>`;
+  const mx=typeof d.max==='function'?d.max(p):d.max;
+  const u=d.log?Math.round(1000*Math.log(v/d.min)/Math.log(mx/d.min)):v;
+  return `<label class="ctl"><span class="lbl">${d.label}<output data-o="${d.k}">${d.fmt?d.fmt(v):v}</output></span><input type="range" data-k="${d.k}" min="${d.log?0:d.min}" max="${d.log?1000:mx}" step="${d.log?1:d.step}" value="${u}"></label>`;
+}
+function renderControls(){
+  const tab=ST.tab,p=ST.p[tab],defs=CTRL[tab],ac=tab==='autocall';
+  let h=`<div class="ctl"><span class="lbl">Your position</span><div class="seg posseg" data-pos="1">
+    <button type="button" data-v="1" aria-pressed="${ST.pos[tab]===1}">${ac?'Investor (long note)':'Long (bought)'}</button>
+    <button type="button" data-v="-1" aria-pressed="${ST.pos[tab]===-1}">${ac?'Issuer (short note)':'Short (sold)'}</button></div></div><hr class="ctl-sep">`;
+  for(const d of defs){if(d.show&&!d.show(p))continue;h+=ctlHTML(d,p);}
+  const box=$('#controls');box.innerHTML=h;
+  box.querySelectorAll('input[type=range]').forEach(inp=>{
+    const d=defs.find(x=>x.k===inp.dataset.k);
+    inp.addEventListener('input',()=>{
+      const mx=typeof d.max==='function'?d.max(p):d.max;
+      let v=+inp.value;if(d.log)v=Math.round(d.min*Math.pow(mx/d.min,v/1000));
+      p[d.k]=v;box.querySelector(`output[data-o="${d.k}"]`).textContent=d.fmt?d.fmt(v):v;
+      onParam(d);
+    });
+    if(d.rerender)inp.addEventListener('change',()=>renderControls());
+  });
+  box.querySelectorAll('select').forEach(sel=>{
+    const d=defs.find(x=>x.k===sel.dataset.k);
+    sel.addEventListener('change',()=>{p[d.k]=d.num?+sel.value:sel.value;
+      if(tab==='barrier'&&d.k==='kind'){p.K=BTYPES[p.kind].K;p.H=BTYPES[p.kind].H;}
+      if(d.rerender)renderControls();onParam(d);});
+  });
+  box.querySelectorAll('.seg').forEach(seg=>seg.addEventListener('click',e=>{
+    const b=e.target.closest('button');if(!b)return;
+    if(seg.dataset.pos){ST.pos[tab]=+b.dataset.v;}else{const d=defs.find(x=>x.k===seg.dataset.k);p[d.k]=b.dataset.v;if(d.rerender){renderControls();onParam(d);return;}}
+    seg.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+    update();
+  }));
+  if(ac){p.elapsed=Math.min(p.elapsed,p.mat*365-2);}
+}
+function onParam(d){
+  if(ST.tab==='autocall'&&d.k!=='S'){if(d.k==='mat')ST.p.autocall.elapsed=Math.min(ST.p.autocall.elapsed,ST.p.autocall.mat*365-2);scheduleAC();}
+  update();
+}
+function renderGreekPills(){
+  const avail=ST.tab==='autocall'?Object.keys(GREEKS).filter(g=>g!=='speed'):Object.keys(GREEKS);
+  if(!avail.includes(ST.greek))ST.greek='delta';
+  $('#greeks').innerHTML=GROUPS.map(([lab,gs])=>`<div class="ggroup">${lab?`<span class="gl">${lab}</span>`:''}${gs.filter(g=>avail.includes(g)).map(g=>`<button type="button" class="pill" data-g="${g}" aria-pressed="${g===ST.greek}">${GREEKS[g]}</button>`).join('')}</div>`).join('');
+}
+$('#greeks').addEventListener('click',e=>{const b=e.target.closest('.pill');if(!b)return;ST.greek=b.dataset.g;$('#greeks').querySelectorAll('.pill').forEach(x=>x.setAttribute('aria-pressed',x===b));update();});
+
+function priceFn(tab,p){
+  const r=p.r/100,q=p.q/100;
+  if(tab==='vanilla')return (S,s,T)=>bs(S,p.K,T,s,r,q,p.kind==='call');
+  if(tab==='digital')return (S,s,T)=>digital(S,p.K,T,s,r,q,p.kind==='call',100);
+  if(p.kind==='EDIP')return (S,s,T)=>euroDIP(S,p.K,p.H,T,s,r,q);
+  return (S,s,T)=>barrier(p.kind,S,p.K,p.H,T,s,r,q);
+}
+const XS=(()=>{const a=[];for(let i=0;i<=360;i++)a.push(40+i/3);return a;})();
+
+function meaning(g,v,pos,unit){
+  const a=fmt(Math.abs(v)),up=v>=0,sg=v>=0?'+':MINUS;
+  switch(g){
+   case 'price':return pos>0?`Your position is worth ${fmt(v)}${unit}. You gain if this value rises.`:`You are short: the position is a liability of ${a}${unit} — roughly the premium you received. You lose if this value rises.`;
+   case 'delta':return `A +1 point move in spot ${up?'makes':'loses'} you about ${a}${unit}. To be delta-neutral you would ${up?'sell':'buy'} ${a} units of the underlying${unit?' per 100 notional':''}.`;
+   case 'gamma':return `Your delta ${up?'rises':'falls'} by ${a} for every +1 point in spot. `+(up?`Long gamma: re-hedging makes you buy dips and sell rallies, so realized moves earn about ½·Γ·ΔS² (a 2-point move: ${fmt(2*v)}), paid for through theta.`:`Short gamma: re-hedging forces you to sell into falls and buy into rallies; a 2-point move costs about ${fmt(2*Math.abs(v))} after hedging. Theta is what pays you for carrying this.`);
+   case 'speed':return `Gamma ${up?'increases':'decreases'} by ${a} per +1 point in spot, and moves the other way if spot falls.`;
+   case 'vega':return `+1 vol point ${up?'makes':'loses'} you about ${a}${unit}. You are ${up?'long':'short'} volatility here.`;
+   case 'vanna':return `+1 vol point moves your delta by ${sg}${a}; equivalently, a +1 point spot move changes your vega by ${sg}${a}. In a typical equity sell-off (spot −3, vol +3), vanna alone shifts your delta by about ${fmtS(3*v)} and your vega by about ${fmtS(-3*v)}.`;
+   case 'volga':return `+1 vol point changes your vega by ${sg}${a}. `+(up?'Long volga: your vega grows as vol rises and shrinks as it falls, so large vol moves in either direction help you.':'Short volga: vol moves in either direction push your vega against you, so large vol moves hurt whichever way they go.');
+   case 'theta':return `One day passing, with spot and vol unchanged, ${up?'adds':'costs'} about ${a}${unit}.`;
+   case 'charm':return `With no spot move your delta drifts by ${sg}${a} per day — a hedge adjustment you need even on a quiet day.`;
+  }
+}
+function regimeText(tab,p){
+  const T=(p.days||0)/365,sig=p.vol/100,sd=sig*Math.sqrt(T);
+  const z=(a,b)=>Math.abs(Math.log(a/b))/sd;
+  if(tab==='vanilla'||tab==='digital'){
+    const zz=z(p.S,p.K),isCall=p.kind==='call';let m;
+    if(zz<.2)m='at the money';else m=((p.S>p.K)===isCall)?'in the money':'out of the money';
+    return `Spot ${p.S.toFixed(1)} is ${pct(Math.abs(p.S/p.K-1)*100)} ${p.S>=p.K?'above':'below'} the strike: ${zz.toFixed(2)} standard moves over the remaining ${fmtDays(p.days)} — ${m}.`;
+  }
+  if(tab==='barrier'){
+    const down=p.kind[0]==='D',knocked=p.kind==='EDIP'?false:(down?p.S<=p.H:p.S>=p.H);
+    if(knocked)return `Spot is beyond the barrier: the option ${p.kind[1]==='I'?'has knocked in and is now a vanilla':'has knocked out and is worth zero'}.`;
+    const zh=z(p.S,p.H);
+    return `The barrier at ${p.H} is ${pct(Math.abs(p.S/p.H-1)*100)} away: ${zh.toFixed(2)} standard moves over ${fmtDays(p.days)}.`+(zh<.5?' It is within half a standard move, so the barrier dominates every greek.':zh>2.5?' Touching is unlikely; the option behaves close to its no-barrier version.':'');
+  }
+  const sch=acSchedule(p,p.elapsed),Tm=sch.t[sch.t.length-1],sdm=sig*Math.sqrt(Tm),zk=Math.log(p.S/p.ki)/sdm;
+  return `Spot is at ${p.S.toFixed(1)}% of the initial fixing. The trigger (${p.ac}%) is ${pct(Math.abs(p.ac/p.S-1)*100)} ${p.ac>=p.S?'above':'below'}; the KI (${p.ki}%) is ${p.S>p.ki?pct((1-p.ki/p.S)*100)+' below, '+zk.toFixed(2)+' standard moves to maturity':'already breached if it stays there'}. Next observation in ${Math.round(sch.t[0]*365)} days, ${sch.t.length} left, maturity in ${fmtDays(Tm*365)}. Assumes the note has not been called so far.`;
+}
+
+let acCache={key:null,res:null},acTimer=null;
+function scheduleAC(){
+  clearTimeout(acTimer);$('#busy').style.display='block';
+  acTimer=setTimeout(()=>{requestAnimationFrame(()=>setTimeout(()=>{
+    const p=ST.p.autocall;acCache={key:acKey(p),res:acCompute(p)};acTimer=null;scenCache={};$('#busy').style.display='none';if(ST.tab==='autocall')update();
+  },0));},180);
+}
+let scenCache={};
+
+function update(){
+  if(ST.tab==='skew'){renderSkew();return;}
+  if(ST.tab==='cheat')return;
+  const tab=ST.tab,p=ST.p[tab],pos=ST.pos[tab],g=ST.greek;
+  let main,ghosts=[],markers=[],shade=null,spotY,greekAtS={};
+  if(tab==='autocall'){
+    if(acCache.key!==acKey(p)&&!acTimer)scheduleAC();
+    if(!acCache.res){$('#readout').innerHTML='<p>Pricing the note…</p>';return;}
+    const R=acCache.res;
+    main={xs:R.xs,ys:R.g[g].map(v=>v*pos)};
+    spotY=interp(R.xs,R.g[g],p.S)*pos;
+    markers=[{x:p.ki,label:'KI',c:'barrier'},{x:p.ac,label:'Trigger',c:'strike'}];
+    if(p.style==='phoenix')markers.push({x:p.cb,label:'Coupon',c:'muted'});
+    shade=[40,p.ki];
+  }else{
+    const f=priceFn(tab,p),T=p.days/365,sig=p.vol/100;
+    main={xs:XS,ys:XS.map(x=>greekAt(f,x,sig,T,g)*pos)};
+    if(ST.ghosts)ghosts=[.5,.25,.1].map(k=>({xs:XS,ys:XS.map(x=>greekAt(f,x,sig,Math.max(T*k,.5/365),g)*pos)}));
+    spotY=greekAt(f,p.S,sig,T,g)*pos;
+    markers=[{x:p.K,label:'K',c:'strike'}];
+    if(tab==='barrier'){markers.push({x:p.H,label:'H',c:'barrier'});if(p.kind!=='EDIP')shade=p.kind[0]==='D'?[40,p.H]:[p.H,160];}
+  }
+  drawChart($('#chart'),{xr:[40,160],main,ghosts,markers,shade,spot:{x:p.S,y:spotY}});
+  // legend
+  let lg=`<span>${GREEKS[g]}, ${UNITS[g]}${tab==='autocall'?' (per 100 notional)':''}. Horizontal axis: spot.</span>`;
+  if(tab!=='autocall')lg+=`<label><input type="checkbox" id="ghostT" ${ST.ghosts?'checked':''}> <span><span class="sw d"></span>Same trade with ½, ¼ and 1/10 of the time left</span></label>`;
+  else lg+=`<span>Shaded: below the KI. Monte Carlo with fixed random numbers.</span>`;
+  $('#legend').innerHTML=lg;
+  const gt=$('#ghostT');if(gt)gt.addEventListener('change',()=>{ST.ghosts=gt.checked;update();});
+  // readout
+  const unit=tab==='autocall'?'':'';
+  $('#readout').innerHTML=`<div class="ro-top"><span class="ro-val ${spotY>1e-12?'pos':spotY<-1e-12?'neg':''}">${fmtS(spotY)}</span><span class="ro-name">${GREEKS[g]} at spot ${p.S.toFixed(1)}</span><span class="badge ${pos>0?'long':'short'}">${tab==='autocall'?(pos>0?'Investor':'Issuer'):(pos>0?'Long':'Short')}</span></div>
+    <p>${meaning(g,spotY,pos,unit)}</p><p class="regime">${regimeText(tab,p)}</p>`;
+  renderNotes();renderPnl();
+}
+function renderNotes(){
+  const tab=ST.tab,p=ST.p[tab],g=ST.greek;let h='';
+  if(tab==='barrier')h+=`<div class="callout"><p><strong>${BTYPES[p.kind].n}</strong></p><p>${BTYPES[p.kind].t}</p></div>`;
+  if(tab==='autocall')h+=`<div class="callout"><p>The investor's note is a zero-coupon bond, plus digital calls (coupons and early redemption at each observation), minus a down-and-in put at the KI (checked at maturity here). The issuing desk is short the note: long the KI put, short the digitals.</p></div>`;
+  h+=`<h3>${GREEKS[g]}: what it measures</h3><p class="def">${DEF[g]}</p><h3>${GREEKS[g]} on this product</h3><p>${TXT[tab][g]}</p>`;
+  if(tab==='digital'){
+    const r=p.r/100,q=p.q/100,T=p.days/365,sig=p.vol/100,isCall=p.kind==='call';
+    const flat=digital(p.S,p.K,T,sig,r,q,isCall,100),dsdk=(p.skew*.01)/(.1*p.K),adj=-100*bsVegaUnit(p.S,p.K,T,sig,r,q)*dsdk,sk=flat+(isCall?adj:-adj);
+    h+=`<div class="callout"><p><strong>Skew changes the price of a digital</strong></p><p>A digital is the limit of a tight call spread. With negative equity skew the lower strike of the spread has the higher vol, so the digital call is worth more than its flat-vol price and the digital put less. The adjustment is about −100 × call vega × ∂σ/∂K.</p>
+    <p class="nums">At spot ${p.S.toFixed(1)}: flat vol ${fmt(flat)} · with skew ${fmt(sk)} · difference ${fmtS(sk-flat)}</p>
+    <p>Desks usually book digitals as call spreads of a chosen width (an "overhedge"), which caps delta and gamma and prices conservatively.</p></div>`;
+  }
+  if(tab==='autocall')h+=`<p class="def" style="font-size:.92rem">Not shown: higher dividends lower the forward and make the KI more likely, so the issuer is long dividends. Worst-of versions add correlation risk. Digitals are smoothed as call spreads of the chosen width — the same idea as a desk overhedge; set it to 0 to see the raw, noisier greeks.</p>`;
+  $('#notes').innerHTML=h;
+}
+function scenPrices(tab,p){
+  const sc=ST.scen,dS=p.S*sc.dS/100;
+  if(tab==='autocall'){
+    const R=acCache.res;if(!R||acCache.key!==acKey(p))return null;
+    const gk=k=>interp(R.xs,R.g[k],p.S);
+    const key=[sc.dv,sc.days].join();
+    if(!scenCache[key])scenCache[key]=buildE(p,Math.max(p.vol/100+sc.dv/100,.005),Math.min(p.elapsed+sc.days,p.mat*365-.5));
+    const base=acPrice(p,R.B0,p.S),full=acPrice(p,scenCache[key],p.S+dS)-base;
+    return {dS,g:{delta:gk('delta'),gamma:gk('gamma'),vega:gk('vega'),vanna:gk('vanna'),volga:gk('volga'),theta:gk('theta')},full};
+  }
+  const f=priceFn(tab,p),T=p.days/365,sig=p.vol/100,g={};
+  for(const k of ['delta','gamma','vega','vanna','volga','theta'])g[k]=greekAt(f,p.S,sig,T,k);
+  const full=f(p.S+dS,Math.max(sig+sc.dv/100,.005),Math.max(T-sc.days/365,1e-12))-f(p.S,sig,T);
+  return {dS,g,full};
+}
+function renderPnl(){
+  const tab=ST.tab,p=ST.p[tab],pos=ST.pos[tab],sc=ST.scen,box=$('#pnl');
+  if(!box.dataset.built){
+    box.innerHTML=`<h3>P&L explain: greeks against full revaluation</h3><p class="hint">Shock the market and compare the Taylor expansion built from the greeks with an exact repricing. The gap is the unexplained P&L.</p>
+    <div class="row3">
+      <label class="ctl"><span class="lbl">Spot move<output id="o_dS"></output></span><input type="range" id="i_dS" min="-25" max="25" step="0.5"></label>
+      <label class="ctl"><span class="lbl">Vol move<output id="o_dv"></output></span><input type="range" id="i_dv" min="-10" max="15" step="0.5"></label>
+      <label class="ctl"><span class="lbl">Days passing<output id="o_days"></output></span><input type="range" id="i_days" min="0" max="30" step="1"></label>
+    </div><div class="tscroll"><table id="pt"></table></div><p class="verdict" id="pv"></p>`;
+    box.dataset.built=1;
+    [['dS',v=>fmtS(v)+'%'],['dv',v=>fmtS(v)+' pts'],['days',v=>v+'']].forEach(([k,f])=>{const i=$('#i_'+k);i.value=sc[k];$('#o_'+k).textContent=f(sc[k]);
+      i.addEventListener('input',()=>{sc[k]=+i.value;$('#o_'+k).textContent=f(sc[k]);renderPnl();});});
+  }
+  const r=scenPrices(tab,p);
+  if(!r){$('#pt').innerHTML='';$('#pv').textContent='Pricing…';return;}
+  const {g,dS,full}=r,dv=sc.dv;
+  const terms=[['Delta · ΔS',g.delta*dS],['½ Gamma · ΔS²',.5*g.gamma*dS*dS],['Vega · Δσ',g.vega*dv],['Vanna · ΔS · Δσ',g.vanna*dS*dv],['½ Volga · Δσ²',.5*g.volga*dv*dv],['Theta · days',g.theta*sc.days]].map(([n,v])=>[n,v*pos]);
+  const tay=terms.reduce((s,t)=>s+t[1],0),fv=full*pos,un=fv-tay;
+  const cl=v=>v>1e-9?'good':v<-1e-9?'bad':'';
+  $('#pt').innerHTML=`<tr><th>Term</th><th>P&L</th></tr>`+terms.map(([n,v])=>`<tr><td>${n}</td><td class="${cl(v)}">${fmtS(v)}</td></tr>`).join('')+
+   `<tr class="tot"><td>Greeks total</td><td class="${cl(tay)}">${fmtS(tay)}</td></tr><tr><td>Full revaluation</td><td class="${cl(fv)}">${fmtS(fv)}</td></tr><tr><td>Unexplained</td><td>${fmtS(un)}</td></tr>`;
+  const big=Math.abs(un)>.15*Math.max(Math.abs(fv),Math.abs(tay))&&Math.abs(un)>1e-3*Math.max(1,Math.abs(p.S)/100);
+  $('#pv').innerHTML=big?`<span class="bad">The greeks miss a large part of this move.</span> The position is too non-linear here for a local approximation — typical near strikes and barriers close to expiry, or for large shocks. Stress tests and VaR for books like this need full revaluation.`:`<span class="good">The greeks explain this move well.</span> The position is smooth over this shock; try a larger move, or move spot next to a strike or barrier and shorten the time.`;
+}
+
+/* ================= skew tab ================= */
+const SK={atm:20,skew:-3,curv:.6,days:365,K:90,dS:-5,regime:'lv',beta:.8};
+function smile(K,F){const m=Math.log(K/F)/.1;return Math.max(.03,(SK.atm+SK.skew*m+SK.curv*m*m)/100);}
+function volAfter(K,dSp){const S1=100*(1+dSp/100),dS=S1-100;
+  switch(SK.regime){case 'strike':return smile(K,100);case 'moneyness':return smile(K,S1);case 'lv':return smile(K+dS,100);default:return Math.max(.03,smile(K,S1)+SK.beta*(-dSp)/100);}}
+const REG={strike:['Sticky strike','Each strike keeps its vol. The ATM vol slides along the old smile: after a fall the new ATM strike is lower, so ATM vol rises by about the skew slope times the move. Delta is the plain Black–Scholes delta.'],
+ moneyness:['Sticky moneyness','Also called sticky delta. The whole smile travels with spot, so ATM vol is unchanged and a fixed strike\'s vol falls after a sell-off. Often closer to reality for long maturities or in slow, trending markets.'],
+ lv:['Local vol','What a local-vol model implies from today\'s skew: fixed-strike vols rise in a sell-off by about the skew slope, and ATM vol by about twice the slope. Short-dated equity index sell-offs often look like this, or steeper.'],
+ custom:['Observed spot–vol beta','Your own estimate: the smile travels with spot and ATM vol shifts by β vol points per 1% fall. Measuring β from history is one way to put a number on the "physical" (realized) skew and compare it with what implied skew prices.']};
+function renderSkewControls(){
+  const defs=[
+   {k:'atm',label:'ATM vol',min:8,max:50,step:.5,fmt:v=>v.toFixed(1)+'%'},
+   {k:'skew',label:'Skew (vol pts per 10% moneyness)',min:-8,max:3,step:.25,fmt:v=>fmtS(v)},
+   {k:'curv',label:'Curvature (smile convexity)',min:0,max:3,step:.1,fmt:v=>v.toFixed(1)},
+   {k:'days',label:'Maturity',min:7,max:1095,log:true,fmt:fmtDays},
+   {k:'regime',type:'select',label:'Spot–vol dynamic',opts:Object.entries(REG).map(([k,v])=>[k,v[0]]),rerender:true},
+   {k:'beta',label:'β: ATM vol pts per 1% fall',min:0,max:2,step:.05,fmt:v=>v.toFixed(2),show:()=>SK.regime==='custom'},
+   {k:'dS',label:'Spot move',min:-20,max:20,step:.5,fmt:v=>fmtS(v)+'%'},
+   {k:'K',label:'Strike for shadow delta',min:60,max:140,step:1,fmt:v=>v.toFixed(0)}];
+  const box=$('#skc');box.innerHTML=defs.filter(d=>!d.show||d.show()).map(d=>ctlHTML(d,SK)).join('');
+  box.querySelectorAll('input[type=range]').forEach(inp=>{const d=defs.find(x=>x.k===inp.dataset.k);inp.addEventListener('input',()=>{let v=+inp.value;if(d.log)v=Math.round(d.min*Math.pow(d.max/d.min,v/1000));SK[d.k]=v;box.querySelector(`output[data-o="${d.k}"]`).textContent=d.fmt(v);renderSkew();});});
+  box.querySelectorAll('select').forEach(sel=>sel.addEventListener('change',()=>{SK.regime=sel.value;renderSkewControls();renderSkew();}));
+}
+function renderSkew(){
+  const T=SK.days/365,xs=[];for(let k=50;k<=150.0001;k+=.5)xs.push(k);
+  drawChart($('#sk1'),{xr:[50,150],noZero:true,main:{xs,ys:xs.map(k=>smile(k,100)*100)},ghosts:[{xs,ys:xs.map(()=>SK.atm)}],yInclude:[SK.atm],markers:[{x:100,label:'ATM',c:'muted'},{x:SK.K,label:'K',c:'strike'}],spot:{x:SK.K,y:smile(SK.K,100)*100}});
+  const h=.25,C=(k,fl)=>bs(100,k,T,fl?SK.atm/100:smile(k,100),0,0,true);
+  const dens=fl=>xs.map(k=>(C(k+h,fl)-2*C(k,fl)+C(k-h,fl))/(h*h));
+  const dS=dens(false),dF=dens(true);
+  drawChart($('#sk2'),{xr:[50,150],main:{xs,ys:dS},ghosts:[{xs,ys:dF}],yInclude:dF,markers:[{x:100,label:'Spot',c:'muted'}]});
+  const cdf=(k,fl)=>1+(C(k+h,fl)-C(k-h,fl))/(2*h);
+  const neg=Math.min(...dS)<-1e-6;
+  $('#sk2r').innerHTML=`Probability of ending below 80: ${(cdf(80,false)*100).toFixed(1)}% with skew vs ${(cdf(80,true)*100).toFixed(1)}% flat. Above 120: ${((1-cdf(120,false))*100).toFixed(1)}% vs ${((1-cdf(120,true))*100).toFixed(1)}%.`+(neg?' <span class="bad">The density dips below zero: this smile would allow arbitrage — reduce curvature or skew.</span>':'');
+  const S1=100*(1+SK.dS/100);
+  drawChart($('#sk3'),{xr:[50,150],noZero:true,main:{xs,ys:xs.map(k=>volAfter(k,SK.dS)*100)},ghosts:[{xs,ys:xs.map(k=>smile(k,100)*100)}],yInclude:xs.map(k=>smile(k,100)*100),markers:[{x:100,label:'Old ATM',c:'muted'},{x:S1,label:'New ATM',c:'curve'},{x:SK.K,label:'K',c:'strike'}],spot:{x:SK.K,y:volAfter(SK.K,SK.dS)*100}});
+  const atm0=smile(100,100)*100,atm1=volAfter(S1,SK.dS)*100,k0=smile(SK.K,100)*100,k1=volAfter(SK.K,SK.dS)*100;
+  const beta=SK.dS!==0?(atm1-atm0)/(-SK.dS):NaN;
+  const sK=smile(SK.K,100),sq=sK*Math.sqrt(T),d1=(Math.log(100/SK.K)+.5*sK*sK*T)/sq,vU=100*npdf(d1)*Math.sqrt(T);
+  const dsdS=(volAfter(SK.K,.05)-volAfter(SK.K,-.05))/.1;
+  const cBS=N(d1),adj=vU*dsdS;
+  $('#sk3r').innerHTML=`<table><tr><th></th><th>Before</th><th>After</th><th>Change</th></tr>
+   <tr><td>ATM vol</td><td>${atm0.toFixed(2)}%</td><td>${atm1.toFixed(2)}%</td><td>${fmtS(atm1-atm0)} pts</td></tr>
+   <tr><td>Vol at strike ${SK.K}</td><td>${k0.toFixed(2)}%</td><td>${k1.toFixed(2)}%</td><td>${fmtS(k1-k0)} pts</td></tr></table>
+   <p class="cap" style="margin-top:8px">${isFinite(beta)?`Implied spot–vol beta: ATM vol moves ${fmtS(beta)} pts per 1% fall. `:''}Strike-${SK.K} vol moves ${fmtS(-dsdS*100)} pts per 1% fall (${fmtS(dsdS*100)} per 1% rise).</p>
+   <table><tr><th>Delta at strike ${SK.K}</th><th>Black–Scholes</th><th>Smile-adjusted</th><th>Gap</th></tr>
+   <tr><td>Call</td><td>${fmt(cBS)}</td><td>${fmt(cBS+adj)}</td><td>${fmtS(adj)}</td></tr>
+   <tr><td>Put</td><td>${fmt(cBS-1)}</td><td>${fmt(cBS-1+adj)}</td><td>${fmtS(adj)}</td></tr></table>
+   <p class="cap" style="margin-top:8px"><strong>${REG[SK.regime][0]}.</strong> ${REG[SK.regime][1]} Smile-adjusted ("shadow") delta = BS delta + vega × ∂σ/∂S. The gap is the same for call and put and is exactly the hedge error if you use BS delta under this dynamic.</p>`;
+}
+$('#skt').innerHTML=`
+<h3>Implied skew versus physical skew</h3>
+<p>Implied skew is a price, set under the risk-neutral measure: downside strikes trade at higher vols because investors pay for crash protection and because vol does rise when markets fall. The density chart shows what that price implies — a fatter left tail and a thinner right tail than the lognormal.</p>
+<p>Physical skew is what actually happens, under the real-world measure: the skewness of realized returns and, for a hedger, how much vol really moves with spot — the realized spot–vol beta. The two usually differ. Implied skew tends to be steeper than realized behaviour, a risk premium earned on average by whoever is short downside and paid back in crashes.</p>
+<h3>Why the dynamic matters for delta</h3>
+<p>Your delta depends on how you assume the smile moves. Under negative skew with local-vol-like dynamics, vols rise as spot falls, so call deltas are lower and put deltas more negative than Black–Scholes. A risk system using sticky strike and a desk hedging with local vol will disagree on delta — and the gap is vanna times the spot–vol link.</p>
+<h3>Being long or short skew</h3>
+<p>You are long skew when you gain if downside vols rise relative to upside vols: a long 90% put / short 110% call risk reversal, a long digital call, a long down-and-in put. Anything with a digital or a barrier inside is first-order sensitive to skew, which is why autocallable books are risk-managed on skew as well as ATM vol.</p>
+<h3>How it shows up in risk reports</h3>
+<p>Skew risk is usually reported as vega by strike (or delta) bucket and maturity, or as P&L under a parametric skew bump — the skew slider here is such a bump. Ask which convention your desk uses, and which spot–vol dynamic sits behind the reported delta.</p>`;
+
+/* ================= cheat sheet ================= */
+$('#cheat').innerHTML=`
+<div class="panel wide"><h3>Who moves what</h3>
+<div class="tscroll"><table class="matrix"><tr><th>When this moves…</th><th>…value changes by</th><th>…delta changes by</th><th>…vega changes by</th></tr>
+<tr><td>Spot</td><td>Delta</td><td>Gamma (and speed moves gamma)</td><td>Vanna</td></tr>
+<tr><td>Implied vol</td><td>Vega</td><td>Vanna</td><td>Volga</td></tr>
+<tr><td>Time</td><td>Theta</td><td>Charm</td><td>Veta (vega decay)</td></tr></table></div></div>
+<div class="panel wide"><h3>Signs by position</h3>
+<div class="tscroll"><table>
+<tr><th>Position</th><th>Delta</th><th>Gamma</th><th>Vega</th><th>Volga</th><th>Theta</th><th>Steeper put skew</th></tr>
+<tr><td>Long ATM call</td><td class="p">+</td><td class="p">+</td><td class="p">+</td><td>≈0</td><td class="m">−</td><td>≈0</td></tr>
+<tr><td>Long ATM put</td><td class="m">−</td><td class="p">+</td><td class="p">+</td><td>≈0</td><td class="m">−</td><td>≈0</td></tr>
+<tr><td>Long OTM put (90%)</td><td class="m">−</td><td class="p">+</td><td class="p">+</td><td class="p">+</td><td class="m">−</td><td class="p">+</td></tr>
+<tr><td>Short OTM call (110%)</td><td class="m">−</td><td class="m">−</td><td class="m">−</td><td class="m">−</td><td class="p">+</td><td class="p">+</td></tr>
+<tr><td>Long risk reversal (long 90P, short 110C)</td><td class="m">−</td><td>≈0</td><td>small</td><td>small</td><td>small</td><td class="p">+</td></tr>
+<tr><td>Long digital call, OTM</td><td class="p">+</td><td class="p">+</td><td class="p">+</td><td>varies</td><td class="m">−</td><td class="p">+</td></tr>
+<tr><td>Long digital call, ITM</td><td class="p">+</td><td class="m">−</td><td class="m">−</td><td>varies</td><td class="p">+</td><td class="p">+</td></tr>
+<tr><td>Long down-and-in put, spot above barrier</td><td class="m">−</td><td class="p">+</td><td class="p">+</td><td>varies</td><td class="m">−</td><td class="p">+</td></tr>
+<tr><td>Long up-and-out call, spot near barrier</td><td class="m">−</td><td class="m">−</td><td class="m">−</td><td>varies</td><td class="p">+</td><td>varies</td></tr>
+<tr><td>Issuer, short autocallable (spot between KI and trigger)</td><td class="m">−</td><td>+ near KI, ± near trigger on obs. dates</td><td>usually +</td><td>mixed</td><td>usually −</td><td>mixed</td></tr>
+</table></div>
+<p class="cap" style="margin-top:8px">Short positions flip every sign. "Varies" and "mixed" mean the sign depends on where spot sits — check it in the relevant tab.</p></div>
+<div class="panel"><h3>Rules of thumb</h3><ul>
+<li>Long optionality means long gamma and long vega, paid for with theta. Short optionality is the reverse.</li>
+<li>Vol up pulls every vanilla delta toward ±0.5.</li>
+<li>Near expiry everything concentrates at strikes and barriers: gamma, charm, and sign flips in vega.</li>
+<li>Digitals and reverse barriers flip the sign of gamma and vega across the level. Zero vega at the level does not mean no vol risk.</li>
+<li>Anything containing a digital — coupons, autocall triggers, European KIs — is first-order sensitive to skew.</li>
+<li>Greeks are local. For large moves or near barriers only full revaluation is reliable; try the P&L explain box.</li></ul></div>
+<div class="panel"><h3>Questions worth asking the desk</h3><ul>
+<li>Which spot–vol dynamic sits behind the delta in the risk system: sticky strike, sticky moneyness or local vol? It changes delta and vanna.</li>
+<li>How are digitals and barriers smoothed (call-spread width, barrier shift), and what reserve does that create?</li>
+<li>How is skew risk reported — vega by strike bucket, a parametric skew bump, or both?</li>
+<li>For autocallables: is the KI observed daily or only at maturity, and how are dividend and correlation sensitivities captured?</li></ul></div>`;
+
+/* ================= tabs & boot ================= */
+function setTab(t){
+  ST.tab=t;
+  document.querySelectorAll('#tabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===t));
+  $('#lab').hidden=(t==='skew'||t==='cheat');$('#skew').hidden=t!=='skew';$('#cheat').hidden=t!=='cheat';
+  if(t==='skew'){renderSkewControls();renderSkew();return;}
+  if(t==='cheat')return;
+  renderGreekPills();renderControls();
+  if(t==='autocall'&&acCache.key!==acKey(ST.p.autocall))scheduleAC();
+  update();
+}
+$('#tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setTab(b.dataset.tab);});
+attachDrag($('#chart'),x=>{const p=ST.p[ST.tab];if(!p)return;p.S=Math.round(x*2)/2;const i=document.querySelector('#controls input[data-k="S"]');if(i){i.value=p.S;document.querySelector('#controls output[data-o="S"]').textContent=p.S.toFixed(1);}update();});
+attachDrag($('#sk1'),x=>{SK.K=Math.round(Math.max(60,Math.min(140,x)));renderSkewControls();renderSkew();});
+attachDrag($('#sk3'),x=>{SK.K=Math.round(Math.max(60,Math.min(140,x)));renderSkewControls();renderSkew();});
+let rsz;window.addEventListener('resize',()=>{clearTimeout(rsz);rsz=setTimeout(update,120);});
+try{matchMedia('(prefers-color-scheme: dark)').addEventListener('change',update);}catch(e){}
+setTab('vanilla');
+</script>
+</body>
+</html>
